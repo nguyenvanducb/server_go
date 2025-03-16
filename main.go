@@ -55,46 +55,43 @@ func main() {
 	collection := client.Database(DBName).Collection(Collection)
 
 	// Đọc tin nhắn WebSocket liên tục
+	var tradeBatch []interface{}
+	batchSize := 10
+
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			fmt.Println("❌ Lỗi khi đọc dữ liệu từ WebSocket:", err)
+			fmt.Println("❌ Lỗi khi đọc WebSocket:", err)
 			continue
 		}
 
-		// Giải mã JSON vào struct
-		var tradeMessage TradeMessage
-		err = json.Unmarshal(message, &tradeMessage)
-		if err != nil {
+		var trade TradeMessage
+		if err := json.Unmarshal(message, &trade); err != nil {
 			fmt.Println("❌ Lỗi giải mã JSON:", err)
 			continue
 		}
 
-		// Lưu vào MongoDB
 		tradeData := bson.D{
-			{"event_type", tradeMessage.EventType},
-			// {"event_time", tradeMessage.Timestamp},
-			{"symbol", tradeMessage.Symbol},
-			// {"trade_id", tradeMessage.Timestamp}, // Không chắc ID, tạm dùng timestamp
-			{"price", tradeMessage.Price},
-			{"quantity", tradeMessage.Quantity},
+			{"event_type", trade.EventType},
+			{"event_time", trade.EventTime},
+			{"trade_id", trade.TradeID},
+			{"symbol", trade.Symbol},
+			{"price", trade.Price},
+			{"quantity", trade.Quantity},
 		}
 
-		_, err = collection.InsertOne(context.TODO(), tradeData)
-		_, err = collection.InsertOne(context.TODO(), tradeData)
-		_, err = collection.InsertOne(context.TODO(), tradeData)
-		_, err = collection.InsertOne(context.TODO(), tradeData)
-		_, err = collection.InsertOne(context.TODO(), tradeData)
-		_, err = collection.InsertOne(context.TODO(), tradeData)
-		_, err = collection.InsertOne(context.TODO(), tradeData)
-		_, err = collection.InsertOne(context.TODO(), tradeData)
-		_, err = collection.InsertOne(context.TODO(), tradeData)
-		_, err = collection.InsertOne(context.TODO(), tradeData)
-		_, err = collection.InsertOne(context.TODO(), tradeData)
-		if err != nil {
-			fmt.Println("❌ Lỗi khi lưu giao dịch:", err)
-		} else {
-			fmt.Println("✅ Đã lưu giao dịch:", tradeData)
+		tradeBatch = append(tradeBatch, tradeData)
+
+		// Chỉ chèn vào MongoDB khi đủ batchSize giao dịch
+		if len(tradeBatch) >= batchSize {
+			_, err := collection.InsertMany(context.TODO(), tradeBatch)
+			if err != nil {
+				fmt.Println("❌ Lỗi khi lưu batch:", err)
+			} else {
+				fmt.Println("✅ Đã lưu batch", batchSize, "giao dịch vào MongoDB!")
+			}
+			tradeBatch = []interface{}{} // Reset batch
 		}
 	}
+
 }
