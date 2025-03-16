@@ -1,117 +1,130 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bitcoin Chart Realtime</title>
-<script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.development.js"></script>
-<style>
-#chart {
-width: 100%;
-height: 500px;
-}
-#tooltip {
-position: absolute;
-display: none;
-background-color: white;
-border: 1px solid black;
-padding: 5px;
-font-size: 12px;
-pointer-events: none;
-}
-</style>
-</head>
-<body>
-<select id="timeframe">
-<option value="1d">1 Day</option>
-<option value="4h">4 Hours</option>
-<option value="1h">1 Hour</option>
-<option value="30m">30 Minutes</option>
-<option value="15m">15 Minutes</option>
-<option value="5m">5 Minutes</option>
-<option value="1m">1 Minute</option>
-</select>
-<div id="chart"></div>
-<div id="tooltip"></div>
-<script>
-if (typeof LightweightCharts === 'undefined') {
-console.error('LightweightCharts library failed to load.');
-} else {
-const chartElement = document.getElementById('chart');
-const timeframeSelect = document.getElementById('timeframe');
-let chart, candleSeries, volumeSeries;
-function createChart() {
-if (chart) chart.remove();
-chart = LightweightCharts.createChart(chartElement, {
-width: window.innerWidth * 0.9,
-height: 500,
-layout: { backgroundColor: '#ffffff', textColor: '#000' },
-grid: { vertLines: { color: '#eee' }, horzLines: { color: '#eee' } },
-timeScale: { timeVisible: true, borderColor: '#ccc' },
-});
-candleSeries = chart.addCandlestickSeries();
-volumeSeries = chart.addHistogramSeries({
-color: '#26a69a',
-priceFormat: { type: 'volume' },
-priceScaleId: '',
-scaleMargins: { top: 0.8, bottom: 0 },
-});
-}
-async function fetchHistoricalData(interval) {
-try {
-const response = await fetch(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=365`);
-const data = await response.json();
-const formattedData = data.map(candle => ({
-time: candle[0] / 1000,
-open: parseFloat(candle[1]),
-high: parseFloat(candle[2]),
-low: parseFloat(candle[3]),
-close: parseFloat(candle[4])
-}));
-candleSeries.setData(formattedData);
-const volumeData = data.map(candle => ({
-time: candle[0] / 1000,
-value: parseFloat(candle[5]),
-color: parseFloat(candle[4]) >= parseFloat(candle[1]) ? '#26a69a' : '#ef5350'
-}));
-volumeSeries.setData(volumeData);
-} catch (error) {
-console.error('Error fetching historical data:', error);
-}
-}
-function setupWebSocket(interval) {
-const ws = new WebSocket(`wss://stream.binance.com:9443/ws/btcusdt@kline_${interval}`);
-ws.onmessage = (event) => {
-const message = JSON.parse(event.data);
-const kline = message.k;
-const newCandle = {
-time: kline.t / 1000,
-open: parseFloat(kline.o),
-high: parseFloat(kline.h),
-low: parseFloat(kline.l),
-close: parseFloat(kline.c)
-};
-candleSeries.update(newCandle);
-const newVolume = {
-time: kline.t / 1000,
-value: parseFloat(kline.v),
-color: parseFloat(kline.c) >= parseFloat(kline.o) ? '#26a69a' : '#ef5350'
-};
-volumeSeries.update(newVolume);
-};
-ws.onerror = (error) => {
-console.error('WebSocket error:', error);
-};
-}
-function updateChart() {
-const interval = timeframeSelect.value;
-createChart();
-fetchHistoricalData(interval);
-setupWebSocket(interval);
-}
-timeframeSelect.addEventListener('change', updateChart);
-updateChart();
-}
-</script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bitcoin Chart Realtime</title>
+    <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.development.js"></script>
+    <style>
+      #chart {
+        width: 100%;
+        height: 500px;
+      }
+      #tooltip {
+        position: absolute;
+        display: none;
+        background-color: white;
+        border: 1px solid black;
+        padding: 5px;
+        font-size: 12px;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <select id="timeframe">
+      <option value="1d">1 Day</option>
+      <option value="4h">4 Hours</option>
+      <option value="1h">1 Hour</option>
+      <option value="30m">30 Minutes</option>
+      <option value="15m">15 Minutes</option>
+      <option value="5m">5 Minutes</option>
+      <option value="1m">1 Minute</option>
+    </select>
+    <div id="chart"></div>
+    <div id="tooltip"></div>
+    <script>
+      if (typeof LightweightCharts === "undefined") {
+        console.error("LightweightCharts library failed to load.");
+      } else {
+        const chartElement = document.getElementById("chart");
+        const timeframeSelect = document.getElementById("timeframe");
+        let chart, candleSeries, volumeSeries;
+        function createChart() {
+          if (chart) chart.remove();
+          chart = LightweightCharts.createChart(chartElement, {
+            width: window.innerWidth * 0.9,
+            height: 500,
+            layout: { backgroundColor: "#ffffff", textColor: "#000" },
+            grid: {
+              vertLines: { color: "#eee" },
+              horzLines: { color: "#eee" },
+            },
+            timeScale: { timeVisible: true, borderColor: "#ccc" },
+          });
+          candleSeries = chart.addCandlestickSeries();
+          volumeSeries = chart.addHistogramSeries({
+            color: "#26a69a",
+            priceFormat: { type: "volume" },
+            priceScaleId: "",
+            scaleMargins: { top: 0.8, bottom: 0 },
+          });
+        }
+        async function fetchHistoricalData(interval) {
+          try {
+            const response = await fetch(
+              `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=365`
+            );
+            const data = await response.json();
+            const formattedData = data.map((candle) => ({
+              time: candle[0] / 1000,
+              open: parseFloat(candle[1]),
+              high: parseFloat(candle[2]),
+              low: parseFloat(candle[3]),
+              close: parseFloat(candle[4]),
+            }));
+            candleSeries.setData(formattedData);
+            const volumeData = data.map((candle) => ({
+              time: candle[0] / 1000,
+              value: parseFloat(candle[5]),
+              color:
+                parseFloat(candle[4]) >= parseFloat(candle[1])
+                  ? "#26a69a"
+                  : "#ef5350",
+            }));
+            volumeSeries.setData(volumeData);
+          } catch (error) {
+            console.error("Error fetching historical data:", error);
+          }
+        }
+        function setupWebSocket(interval) {
+          const ws = new WebSocket(
+            `wss://stream.binance.com:9443/ws/btcusdt@kline_${interval}`
+          );
+          ws.onmessage = (event) => {
+            const message = JSON.parse(event.data);
+            const kline = message.k;
+            const newCandle = {
+              time: kline.t / 1000,
+              open: parseFloat(kline.o),
+              high: parseFloat(kline.h),
+              low: parseFloat(kline.l),
+              close: parseFloat(kline.c),
+            };
+            candleSeries.update(newCandle);
+            const newVolume = {
+              time: kline.t / 1000,
+              value: parseFloat(kline.v),
+              color:
+                parseFloat(kline.c) >= parseFloat(kline.o)
+                  ? "#26a69a"
+                  : "#ef5350",
+            };
+            volumeSeries.update(newVolume);
+          };
+          ws.onerror = (error) => {
+            console.error("WebSocket error:", error);
+          };
+        }
+        function updateChart() {
+          const interval = timeframeSelect.value;
+          createChart();
+          fetchHistoricalData(interval);
+          setupWebSocket(interval);
+        }
+        timeframeSelect.addEventListener("change", updateChart);
+        updateChart();
+      }
+    </script>
+  </body>
 </html>
