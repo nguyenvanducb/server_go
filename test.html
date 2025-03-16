@@ -31,25 +31,15 @@ pointer-events: none;
 <option value="5m">5 Minutes</option>
 <option value="1m">1 Minute</option>
 </select>
-<select id="indicator">
-<option value="none">Select Indicator</option>
-<option value="rsi">RSI</option>
-<option value="macd">MACD</option>
-<option value="bollinger">Bollinger Bands</option>
-<option value="ichimoku">Ichimoku</option>
-</select>
 <div id="chart"></div>
-<div id="rsi-pane" style="width:100%; height:150px; display:none;"></div>
 <div id="tooltip"></div>
 <script>
 if (typeof LightweightCharts === 'undefined') {
 console.error('LightweightCharts library failed to load.');
 } else {
 const chartElement = document.getElementById('chart');
-const rsiPaneElement = document.getElementById('rsi-pane');
 const timeframeSelect = document.getElementById('timeframe');
-const indicatorSelect = document.getElementById('indicator');
-let chart, candleSeries, volumeSeries, rsiChart, rsiSeries;
+let chart, candleSeries, volumeSeries;
 function createChart() {
 if (chart) chart.remove();
 chart = LightweightCharts.createChart(chartElement, {
@@ -85,58 +75,40 @@ value: parseFloat(candle[5]),
 color: parseFloat(candle[4]) >= parseFloat(candle[1]) ? '#26a69a' : '#ef5350'
 }));
 volumeSeries.setData(volumeData);
-if (rsiSeries) {
-calculateRSI(formattedData);
-}
 } catch (error) {
 console.error('Error fetching historical data:', error);
 }
 }
-function calculateRSI(data, period = 14) {
-if (!data || data.length < period) return;
-let gains = [], losses = [], rsiValues = [];
-for (let i = 1; i < data.length; i++) {
-let change = data[i].close - data[i - 1].close;
-gains.push(change > 0 ? change : 0);
-losses.push(change < 0 ? Math.abs(change) : 0);
-}
-let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period;
-let avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period;
-for (let i = period; i < gains.length; i++) {
-avgGain = (avgGain * (period - 1) + gains[i]) / period;
-avgLoss = (avgLoss * (period - 1) + losses[i]) / period;
-let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-let rsi = 100 - (100 / (1 + rs));
-rsiValues.push({ time: data[i + 1].time, value: rsi });
-}
-if (rsiSeries) {
-rsiSeries.setData(rsiValues);
-}
-}
-function addRSI() {
-if (!rsiChart) {
-rsiPaneElement.style.display = 'block';
-rsiChart = LightweightCharts.createChart(rsiPaneElement, {
-width: window.innerWidth * 0.9,
-height: 150,
-layout: { backgroundColor: '#ffffff', textColor: '#000' },
-grid: { vertLines: { color: '#eee' }, horzLines: { color: '#eee' } },
-timeScale: { timeVisible: true, borderColor: '#ccc' },
-});
-rsiSeries = rsiChart.addLineSeries({ color: 'blue' });
-}
-fetchHistoricalData(timeframeSelect.value);
+function setupWebSocket(interval) {
+const ws = new WebSocket(`wss://stream.binance.com:9443/ws/btcusdt@kline_${interval}`);
+ws.onmessage = (event) => {
+const message = JSON.parse(event.data);
+const kline = message.k;
+const newCandle = {
+time: kline.t / 1000,
+open: parseFloat(kline.o),
+high: parseFloat(kline.h),
+low: parseFloat(kline.l),
+close: parseFloat(kline.c)
+};
+candleSeries.update(newCandle);
+const newVolume = {
+time: kline.t / 1000,
+value: parseFloat(kline.v),
+color: parseFloat(kline.c) >= parseFloat(kline.o) ? '#26a69a' : '#ef5350'
+};
+volumeSeries.update(newVolume);
+};
+ws.onerror = (error) => {
+console.error('WebSocket error:', error);
+};
 }
 function updateChart() {
 const interval = timeframeSelect.value;
 createChart();
 fetchHistoricalData(interval);
+setupWebSocket(interval);
 }
-indicatorSelect.addEventListener('change', () => {
-if (indicatorSelect.value === 'rsi') {
-addRSI();
-}
-});
 timeframeSelect.addEventListener('change', updateChart);
 updateChart();
 }
