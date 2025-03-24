@@ -182,7 +182,7 @@ func restartPing() {
 }
 
 func subscribeStockPrices() {
-	subscribeMessage := "d|s|tk|bi+tm+op|ACB,SSI,HPG,MBB"
+	subscribeMessage := "d|s|tk|bi+tm+op|ACB,BCM,BID,BVH,CTG,FPT,GAS,GVR,HDB,HPG,LPB,MBB,MSN,MWG,PLX,SAB,SHB,SSB,SSI,STB,TCB,TPB,VCB,VHM,VIB,VIC,VJC,VNM,VPB,VRE,MSB,OCB,ABB,VND,VCI,HCM,VIX,MBS,FTS,DXG,NLG,KDH,KBC,SZC,IDC,PVS,PVD,REE,PC1,POW,HHV,VCG,CTD,IJC,CTR,VTP,VGI,DGC,DPM,DCM,PAN,HAG,BSR,HDC,NVL"
 	err := conn.WriteMessage(websocket.TextMessage, []byte(subscribeMessage))
 	if err != nil {
 		fmt.Println("❌ Lỗi đăng ký nhận dữ liệu:", err)
