@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"go.mongodb.org/mongo-driver/bson"
@@ -12,9 +13,9 @@ import (
 )
 
 const (
-	MongoDBURI   = "mongodb+srv://ducnguyen95hust:24Eh8M7ZfwWbecf7@cluster0.dvd5q.mongodb.net/"
+	MongoDBURI   = "mongodb+srv://hoangminhtri99:Triminh96@cluster0.lu5ww.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 	DBName       = "moneyflow"
-	Collection   = "orders"
+	Collection   = "stock_code"
 	WebsocketURL = "wss://stream.binance.com:9443/ws/btcusdt@trade"
 )
 
@@ -55,14 +56,10 @@ func main() {
 	collection := client.Database(DBName).Collection(Collection)
 
 	// Đọc tin nhắn WebSocket liên tục
-	var tradeBatch []interface{}
-	batchSize := 10
-
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			fmt.Println("❌ Lỗi khi đọc WebSocket:", err)
-			continue
+			fmt.Println("🔌 Mất kết nối: %w", err)
 		}
 
 		var trade TradeMessage
@@ -71,27 +68,27 @@ func main() {
 			continue
 		}
 
-		tradeData := bson.D{
-			{"event_type", trade.EventType},
-			{"event_time", trade.EventTime},
-			{"trade_id", trade.TradeID},
-			{"symbol", trade.Symbol},
-			{"price", trade.Price},
-			{"quantity", trade.Quantity},
+		filter := bson.M{"symbol": trade.Symbol}
+		update := bson.M{
+			"$set": bson.M{
+				"event_type": trade.EventType,
+				"event_time": trade.EventTime,
+				"trade_id":   trade.TradeID,
+				"price":      trade.Price,
+				"quantity":   trade.Quantity,
+			},
+		}
+		opts := options.Update().SetUpsert(true)
+
+		_, err = collection.UpdateOne(context.TODO(), filter, update, opts)
+		if err != nil {
+			fmt.Println("❌ Lỗi khi cập nhật dữ liệu:", err)
+		} else {
+			fmt.Println("✅ Đã cập nhật giao dịch cho", trade.Symbol)
 		}
 
-		tradeBatch = append(tradeBatch, tradeData)
-
-		// Chỉ chèn vào MongoDB khi đủ batchSize giao dịch
-		if len(tradeBatch) >= batchSize {
-			_, err := collection.InsertMany(context.TODO(), tradeBatch)
-			if err != nil {
-				fmt.Println("❌ Lỗi khi lưu batch:", err)
-			} else {
-				fmt.Println("✅ Đã lưu batch", batchSize, "giao dịch vào MongoDB!")
-			}
-			tradeBatch = []interface{}{} // Reset batch
-		}
+		// Giảm tốc độ nhận dữ liệu
+		time.Sleep(300 * time.Millisecond)
 	}
 
 }
