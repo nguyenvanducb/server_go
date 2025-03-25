@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -21,7 +22,7 @@ const (
 	Collection   = "stock_code"
 	WebsocketURL = "wss://openapi.tcbs.com.vn/ws/thesis/v1/stream/normal"
 	Token        = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcGlvcGVuLnRjYnMuY29tLnZuIiwiZXhwIjoxNzQyOTUzOTk3LCJqdGkiOiIiLCJpYXQiOjE3NDI4Njc1OTcsInN1YiI6IjEwMDAwNzE3MDYyIiwic3ViVHlwZSI6ImN1c3RvbWVyIiwiY3VzdG9keUlEIjoiMTA1QzEyODkxNyIsInRjYnNJZCI6IjEwMDAwNzE3MDYyIiwic2Vzc2lvbklEIjoiYzM5YTNhZGEtNjA4OC00MzU0LWFkYTgtMDgzZTgzZTk4ODAxIiwiY2xpZW50SUQiOiIxIiwic3Vic2NyaXB0aW9uIjoiYmFzaWMiLCJzY29wZSI6WyJib25kIiwiZnVuZCIsInN0b2NrIl0sInN0ZXB1cF9leHAiOjE3NDI4OTYzOTcsIm90cCI6IjczNTk2MyIsIm90cFR5cGUiOiJUT1RQIiwib3RwU291cmNlIjoiVENJTlZFU1QiLCJvdHBTZXNzaW9uSWQiOiIwMDQ4YWRiOS1mZDc5LTQwMDgtYWM0YS1kMjJlNDBjYjMwMWEiLCJhY2NvdW50VHlwZSI6InByaW1hcnkiLCJhY2NvdW50X3N0YXR1cyI6IjEiLCJlbWFpbCI6ImhvYW5nbWluaHRyaTk5QGdtYWlsLmNvbSIsInJvbGVzIjpbImN1c3RvbWVyIiwiQXBwbGljYXRpb24vT1BFTl9BUElfUElMT1QiXSwiY2xpZW50X2tleSI6Ik9MMEVWdE9XTDhISUVjaC9hV240MTlMQ2tBK0p5UXBYeW1naU9pRG1pSVdRMFFGcmFkc1RjKzBpNHZvRjdmWTUifQ.a7gzyxvCAn0oOHR87lcMReWKPkomXRoMzkrBlQzPA_2zEo-jc9yMa8KcaQDiRH4X4lWEm08onWtPCa8tpZ2wd07idJPRui5qnx5H3EtYrPzn-YqjJSgZdVZL_dNVOKD99vuKQmtC9dWVz25_4OcluzGj5k1raZKfWQG04tFzmHFi3b09dh2KI2_d-i3pcbt_Z3BeE1RMAkH1qSQI2Xo6hW2QGll0hzS5_ElO5kaFeBE1YX8L8hqbHCGam8e0KPJJAayKLAt8lOjWIt3C7zr2U_RC6GQz7UQ-iN8pbkTTznc0wOzwdc0SLEPCEOcvwinPvpjLaTpRBY7T0y0KtfuvGQ"
-	BatchSize    = 10 // Số lượng bản ghi trong một batch
+	BatchSize    = 2 // Số lượng bản ghi trong một batch
 )
 
 var (
@@ -151,23 +152,52 @@ func addToBatch(data map[string]interface{}) {
 	}
 	batchMutex.Unlock()
 }
-
 func saveBatchToMongoDB() {
 	if len(batchData) == 0 {
 		return
 	}
 
 	// Copy dữ liệu batch và làm rỗng batchData
-	tempBatch := make([]interface{}, len(batchData))
-	copy(tempBatch, batchData)
-	batchData = nil
+	tempBatch := batchData
+	batchData = nil // Xóa dữ liệu gốc để tránh ghi đè
 
-	// Chèn dữ liệu vào MongoDB
-	_, err := dbCollection.InsertMany(context.TODO(), tempBatch)
-	if err != nil {
-		fmt.Println("❌ Lỗi khi lưu batch vào MongoDB:", err)
-	} else {
-		fmt.Printf("✅ Đã lưu %d bản ghi vào MongoDB.\n", len(tempBatch))
+	// Cập nhật dữ liệu theo symbol thay vì chèn mới
+	var writes []mongo.WriteModel
+
+	for _, d := range tempBatch {
+		// Ép kiểu data về đúng dạng map[string]interface{}
+		data, ok := d.(map[string]interface{})
+		if !ok {
+			fmt.Println("❌ Dữ liệu không hợp lệ, bỏ qua:", d)
+			continue
+		}
+
+		// Lấy symbol
+		symbol, ok := data["symbol"].(string)
+		if !ok {
+			fmt.Println("❌ Dữ liệu thiếu 'symbol', bỏ qua:", data)
+			continue
+		}
+
+		// Tạo bộ lọc và cập nhật
+		filter := bson.M{"symbol": symbol}
+		update := bson.M{"$set": data}
+
+		// Sử dụng bulk update
+		writes = append(writes, mongo.NewUpdateOneModel().
+			SetFilter(filter).
+			SetUpdate(update).
+			SetUpsert(true))
+	}
+
+	// Thực hiện cập nhật hàng loạt (bulk write)
+	if len(writes) > 0 {
+		_, err := dbCollection.BulkWrite(context.TODO(), writes)
+		if err != nil {
+			fmt.Println("❌ Lỗi khi cập nhật batch vào MongoDB:", err)
+		} else {
+			fmt.Printf("✅ Đã cập nhật %d bản ghi vào MongoDB.\n", len(tempBatch))
+		}
 	}
 }
 
