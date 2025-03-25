@@ -22,7 +22,7 @@ const (
 	Collection   = "stock_code"
 	WebsocketURL = "wss://openapi.tcbs.com.vn/ws/thesis/v1/stream/normal"
 	Token        = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcGlvcGVuLnRjYnMuY29tLnZuIiwiZXhwIjoxNzQyOTUzOTk3LCJqdGkiOiIiLCJpYXQiOjE3NDI4Njc1OTcsInN1YiI6IjEwMDAwNzE3MDYyIiwic3ViVHlwZSI6ImN1c3RvbWVyIiwiY3VzdG9keUlEIjoiMTA1QzEyODkxNyIsInRjYnNJZCI6IjEwMDAwNzE3MDYyIiwic2Vzc2lvbklEIjoiYzM5YTNhZGEtNjA4OC00MzU0LWFkYTgtMDgzZTgzZTk4ODAxIiwiY2xpZW50SUQiOiIxIiwic3Vic2NyaXB0aW9uIjoiYmFzaWMiLCJzY29wZSI6WyJib25kIiwiZnVuZCIsInN0b2NrIl0sInN0ZXB1cF9leHAiOjE3NDI4OTYzOTcsIm90cCI6IjczNTk2MyIsIm90cFR5cGUiOiJUT1RQIiwib3RwU291cmNlIjoiVENJTlZFU1QiLCJvdHBTZXNzaW9uSWQiOiIwMDQ4YWRiOS1mZDc5LTQwMDgtYWM0YS1kMjJlNDBjYjMwMWEiLCJhY2NvdW50VHlwZSI6InByaW1hcnkiLCJhY2NvdW50X3N0YXR1cyI6IjEiLCJlbWFpbCI6ImhvYW5nbWluaHRyaTk5QGdtYWlsLmNvbSIsInJvbGVzIjpbImN1c3RvbWVyIiwiQXBwbGljYXRpb24vT1BFTl9BUElfUElMT1QiXSwiY2xpZW50X2tleSI6Ik9MMEVWdE9XTDhISUVjaC9hV240MTlMQ2tBK0p5UXBYeW1naU9pRG1pSVdRMFFGcmFkc1RjKzBpNHZvRjdmWTUifQ.a7gzyxvCAn0oOHR87lcMReWKPkomXRoMzkrBlQzPA_2zEo-jc9yMa8KcaQDiRH4X4lWEm08onWtPCa8tpZ2wd07idJPRui5qnx5H3EtYrPzn-YqjJSgZdVZL_dNVOKD99vuKQmtC9dWVz25_4OcluzGj5k1raZKfWQG04tFzmHFi3b09dh2KI2_d-i3pcbt_Z3BeE1RMAkH1qSQI2Xo6hW2QGll0hzS5_ElO5kaFeBE1YX8L8hqbHCGam8e0KPJJAayKLAt8lOjWIt3C7zr2U_RC6GQz7UQ-iN8pbkTTznc0wOzwdc0SLEPCEOcvwinPvpjLaTpRBY7T0y0KtfuvGQ"
-	BatchSize    = 2 // Số lượng bản ghi trong một batch
+	BatchSize    = 1 // Số lượng bản ghi trong một batch
 )
 
 var (
@@ -33,20 +33,51 @@ var (
 	batchMutex     sync.Mutex
 )
 
-func main() {
-	// Kết nối MongoDB
-	clientOptions := options.Client().ApplyURI(MongoDBURI)
-	client, err := mongo.Connect(context.TODO(), clientOptions)
-	if err != nil {
-		log.Fatalf("❌ Lỗi khi kết nối MongoDB: %v", err)
-	}
-	defer client.Disconnect(context.TODO())
+func connectMongoDB() *mongo.Client {
+	// Cấu hình tùy chọn kết nối MongoDB
+	clientOptions := options.Client().
+		ApplyURI(MongoDBURI).
+		SetServerSelectionTimeout(10 * time.Second). // Tăng timeout chọn server
+		SetSocketTimeout(30 * time.Second).          // Timeout cho socket
+		SetMaxPoolSize(100).                         // Giới hạn số kết nối tối đa
+		SetMinPoolSize(5).                           // Giữ kết nối tối thiểu
+		SetHeartbeatInterval(10 * time.Second)       // Ping server để giữ kết nối
 
-	// Kiểm tra kết nối MongoDB
+	// Thử kết nối với MongoDB
+	var client *mongo.Client
+	var err error
+
+	for i := 0; i < 3; i++ { // Thử lại tối đa 3 lần
+		client, err = mongo.Connect(context.TODO(), clientOptions)
+		if err == nil {
+			break // Kết nối thành công, thoát vòng lặp
+		}
+		fmt.Printf("❌ Lỗi khi kết nối MongoDB (lần %d): %v\n", i+1, err)
+		time.Sleep(3 * time.Second) // Đợi 3 giây trước khi thử lại
+	}
+
+	if err != nil {
+		log.Fatalf("❌ Không thể kết nối MongoDB sau 3 lần thử: %v", err)
+	}
+
+	// Kiểm tra kết nối
 	err = client.Ping(context.TODO(), nil)
 	if err != nil {
-		log.Fatalf("❌ Không thể ping MongoDB: %v", err)
+		log.Fatalf("❌ Không thể ping đến MongoDB: %v", err)
 	}
+
+	fmt.Println("✅ Kết nối thành công đến MongoDB!")
+	return client
+}
+
+func main() {
+	// Kết nối MongoDB
+	// clientOptions := options.Client().ApplyURI(MongoDBURI)
+	// client, err := mongo.Connect(context.TODO(), clientOptions)
+	client := connectMongoDB()
+
+	defer client.Disconnect(context.TODO())
+
 	fmt.Println("✅ Kết nối thành công đến MongoDB!")
 
 	dbCollection = client.Database(DBName).Collection(Collection)
