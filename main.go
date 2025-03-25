@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -34,61 +35,85 @@ func main() {
 	clientOptions := options.Client().ApplyURI(MongoDBURI)
 	client, err := mongo.Connect(context.TODO(), clientOptions)
 	if err != nil {
-		panic("❌ Lỗi khi kết nối MongoDB: " + err.Error())
+		log.Fatal("❌ Lỗi khi kết nối MongoDB:", err)
 	}
 	defer client.Disconnect(context.TODO())
 
-	// Kiểm tra kết nối
+	// Kiểm tra kết nối MongoDB
 	err = client.Ping(context.TODO(), nil)
 	if err != nil {
-		panic("❌ Không thể ping đến MongoDB: " + err.Error())
+		log.Fatal("❌ Không thể ping đến MongoDB:", err)
 	}
 	fmt.Println("✅ Kết nối thành công đến MongoDB!")
 
-	// Kết nối WebSocket tới Binance
-	conn, _, err := websocket.DefaultDialer.Dial(WebsocketURL, nil)
-	if err != nil {
-		panic("❌ Không thể kết nối WebSocket: " + err.Error())
-	}
-	defer conn.Close()
-	fmt.Println("✅ Kết nối WebSocket thành công!")
-
 	collection := client.Database(DBName).Collection(Collection)
 
-	// Đọc tin nhắn WebSocket liên tục
+	// 2. Kết nối WebSocket và lắng nghe
 	for {
-		_, message, err := conn.ReadMessage()
-		if err != nil {
-			fmt.Println("🔌 Mất kết nối: %w", err)
-		}
+		fmt.Println("🔄 Kết nối lại WebSocket...")
 
-		var trade TradeMessage
-		if err := json.Unmarshal(message, &trade); err != nil {
-			fmt.Println("❌ Lỗi giải mã JSON:", err)
+		conn, _, err := websocket.DefaultDialer.Dial(WebsocketURL, nil)
+		if err != nil {
+			fmt.Println("❌ Không thể kết nối WebSocket:", err)
+			time.Sleep(5 * time.Second) // Thử lại sau 5s
 			continue
 		}
+		fmt.Println("✅ Kết nối WebSocket thành công!")
 
-		filter := bson.M{"symbol": trade.Symbol}
-		update := bson.M{
-			"$set": bson.M{
-				"event_type": trade.EventType,
-				"event_time": trade.EventTime,
-				"trade_id":   trade.TradeID,
-				"price":      trade.Price,
-				"quantity":   trade.Quantity,
-			},
+		// Gửi ping định kỳ để giữ kết nối sống
+		go func() {
+			for {
+				time.Sleep(30 * time.Second)
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					fmt.Println("⚠️ Lỗi gửi ping:", err)
+					conn.Close()
+					return
+				}
+			}
+		}()
+
+		// Lắng nghe tin nhắn WebSocket
+		for {
+			_, message, err := conn.ReadMessage()
+			if err != nil {
+				fmt.Println("🔌 Mất kết nối WebSocket:", err)
+				conn.Close()
+				break // Thoát khỏi vòng lặp để thử kết nối lại
+			}
+
+			var trade TradeMessage
+			if err := json.Unmarshal(message, &trade); err != nil {
+				fmt.Println("❌ Lỗi giải mã JSON:", err)
+				continue
+			}
+
+			// Chỉ cập nhật nếu là BTCUSDT
+			if trade.Symbol != "BTCUSDT" {
+				continue
+			}
+
+			// Cập nhật dữ liệu vào MongoDB
+			filter := bson.M{"symbol": trade.Symbol}
+			update := bson.M{
+				"$set": bson.M{
+					"event_type": trade.EventType,
+					"event_time": trade.EventTime,
+					"trade_id":   trade.TradeID,
+					"price":      trade.Price,
+					"quantity":   trade.Quantity,
+				},
+			}
+			opts := options.Update().SetUpsert(true)
+
+			_, err = collection.UpdateOne(context.TODO(), filter, update, opts)
+			if err != nil {
+				fmt.Println("❌ Lỗi khi cập nhật dữ liệu:", err)
+			} else {
+				fmt.Println("✅ Đã cập nhật giao dịch cho", trade.Symbol)
+			}
+
+			// Giảm tải kết nối
+			time.Sleep(300 * time.Millisecond)
 		}
-		opts := options.Update().SetUpsert(true)
-
-		_, err = collection.UpdateOne(context.TODO(), filter, update, opts)
-		if err != nil {
-			fmt.Println("❌ Lỗi khi cập nhật dữ liệu:", err)
-		} else {
-			fmt.Println("✅ Đã cập nhật giao dịch cho", trade.Symbol)
-		}
-
-		// Giảm tốc độ nhận dữ liệu
-		time.Sleep(300 * time.Millisecond)
 	}
-
 }
