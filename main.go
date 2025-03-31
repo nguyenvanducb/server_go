@@ -20,6 +20,7 @@ const (
 	MongoDBURI   = "mongodb+srv://hoangminhtri99:Triminh96@cluster0.lu5ww.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 	DBName       = "moneyflow"
 	Collection   = "stock_code"
+	CollectionOrder   = "order"
 	WebsocketURL = "wss://openapi.tcbs.com.vn/ws/thesis/v1/stream/normal"
 	Token        = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcGlvcGVuLnRjYnMuY29tLnZuIiwiZXhwIjoxNzQzNDc1NTI5LCJqdGkiOiIiLCJpYXQiOjE3NDMzODkxMjksInN1YiI6IjEwMDAwNzE3MDYyIiwic3ViVHlwZSI6ImN1c3RvbWVyIiwiY3VzdG9keUlEIjoiMTA1QzEyODkxNyIsInRjYnNJZCI6IjEwMDAwNzE3MDYyIiwic2Vzc2lvbklEIjoiNjIwNmMxNGQtZDVkZi00NWEzLWFhZjQtZGFjMDcyNzg3MWRmIiwiY2xpZW50SUQiOiIxIiwic3Vic2NyaXB0aW9uIjoiYmFzaWMiLCJzY29wZSI6WyJib25kIiwiZnVuZCIsInN0b2NrIl0sInN0ZXB1cF9leHAiOjE3NDM0MTc5MjksIm90cCI6IjY4MzA4OSIsIm90cFR5cGUiOiJUT1RQIiwib3RwU291cmNlIjoiVENJTlZFU1QiLCJvdHBTZXNzaW9uSWQiOiJlNjY2OGJiNy1jOWRhLTRkN2ItYTU4OS0xODZhZjg1MmYyYjIiLCJhY2NvdW50VHlwZSI6InByaW1hcnkiLCJhY2NvdW50X3N0YXR1cyI6IjEiLCJlbWFpbCI6ImhvYW5nbWluaHRyaTk5QGdtYWlsLmNvbSIsInJvbGVzIjpbImN1c3RvbWVyIiwiQXBwbGljYXRpb24vT1BFTl9BUElfUElMT1QiXSwiY2xpZW50X2tleSI6Ik9MMEVWdE9XTDhISUVjaC9hV240MTlMQ2tBK0p5UXBYeW1naU9pRG1pSVdRMFFGcmFkc1RjKzBpNHZvRjdmWTUifQ.JtuRzKyl-B3o-b4OhgbnZHtS3yNufGS-IFo0c6R64WX-iqMede6nNgG22FmLAZnsF4PXcrgiTPaNKvrxxXMsTBE-EM82JjU-hY7Fk_3mKYGZ-i2C38YucwxKCia3DZheyuWcB44SFQbTy1XCj4Cse637gfMvlFJtVWJjasQGy7oCzdGjeBRZcxvsJWl9Nnteds0S4keDSTwOeV5xKLFOtJScio85DKVjQNkROSwQFzoCjbpgK3eA9UWyblog2WElIhjl_CviRdX8ME-f_HHDL24GDo_FFJjxSMn2G_pCd_bsxEq0P5hOMBg3oVGIqDIo-nFbDD2v47QCThcajCT8fw"
 	BatchSize    = 5 // Số lượng bản ghi trong một batch
@@ -206,6 +207,16 @@ func mapData(code string, jsonData map[string]interface{}){
 		if code == "s|6" {
 			fmt.Printf("%v\n", mapStock[symbol])
 		}
+}
+
+func insertBatchToMongoDB() {
+	// Chèn dữ liệu vào MongoDB
+	_, err := dbCollection.InsertMany(context.TODO(), tempBatch)
+	if err != nil {
+		fmt.Println("❌ Lỗi khi lưu batch vào MongoDB:", err)
+	} else {
+		fmt.Printf("✅ Đã lưu %d bản ghi vào MongoDB.\n", len(tempBatch))
+	}
 }
 
 func addToBatch(data map[string]interface{}) {
