@@ -16,8 +16,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-const (
-	MongoDBURI   = "mongodb+srv://hoangminhtri99:Triminh96@cluster0.lu5ww.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+const (ngminhtri99:Triminh96@cluster0.lu5ww.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 	DBName       = "moneyflow"
 	Collection   = "stock_code"
 	CollectionOrder   = "order"
@@ -35,6 +34,11 @@ var (
 )
 
 var mapStock = make(map[string]map[string]interface{})
+var (
+	batchOrderData  []interface{}
+	batchOrderMutex sync.Mutex
+)
+
 
 
 func connectMongoDB() *mongo.Client {
@@ -179,45 +183,62 @@ func processJsonData(input string) {
 	addToBatch(jsonData)
 }
 
-func mapData(code string, jsonData map[string]interface{}){
-		// fmt.Println(jsonData["symbol"])
-		symbolRaw, exists := jsonData["symbol"]
-		if !exists {
-			fmt.Println("❌ Không có trường 'symbol'")
-			return
-		}
-	
-		symbol, ok := symbolRaw.(string)
-		if !ok {
-			fmt.Println("❌ 'symbol' không phải kiểu string")
-			return
-		}
-	
-		// Nếu chưa có symbol đó trong mapStock
-		if _, found := mapStock[symbol]; !found {
-			// Tạo mới entry
-			mapStock[symbol] = jsonData
-		} else {
-			// Gộp từng key trong jsonData vào mapStock[symbol]
-			for k, v := range jsonData {
-				mapStock[symbol][k] = v
-			}
-		}
-	
-		if code == "s|6" {
-			fmt.Printf("%v\n", mapStock[symbol])
-		}
-}
+func mapData(code string, jsonData map[string]interface{}) {
+	symbolRaw, exists := jsonData["symbol"]
+	if !exists {
+		fmt.Println("❌ Không có trường 'symbol'")
+		return
+	}
 
-func insertBatchToMongoDB() {
-	// Chèn dữ liệu vào MongoDB
-	_, err := dbCollection.InsertMany(context.TODO(), tempBatch)
-	if err != nil {
-		fmt.Println("❌ Lỗi khi lưu batch vào MongoDB:", err)
+	symbol, ok := symbolRaw.(string)
+	if !ok {
+		fmt.Println("❌ 'symbol' không phải kiểu string")
+		return
+	}
+
+	// Cập nhật mapStock
+	if _, found := mapStock[symbol]; !found {
+		mapStock[symbol] = jsonData
 	} else {
-		fmt.Printf("✅ Đã lưu %d bản ghi vào MongoDB.\n", len(tempBatch))
+		for k, v := range jsonData {
+			mapStock[symbol][k] = v
+		}
+	}
+
+	// 👇 Nếu code là "s|6", đưa vào batch "order"
+	if code == "s|6" {
+		addOrderToBatch(jsonData)
+		fmt.Printf("📥 Đưa vào batch Order: %v\n", jsonData)
 	}
 }
+
+
+func addOrderToBatch(data map[string]interface{}) {
+	batchOrderMutex.Lock()
+	batchOrderData = append(batchOrderData, data)
+
+	if len(batchOrderData) >= BatchSize {
+		saveOrderBatchToMongoDB()
+	}
+	batchOrderMutex.Unlock()
+}
+
+func saveOrderBatchToMongoDB() {
+	if len(batchOrderData) == 0 {
+		return
+	}
+
+	tempBatch := batchOrderData
+	batchOrderData = nil
+
+	_, err := dbCollectionOrder.InsertMany(context.TODO(), tempBatch)
+	if err != nil {
+		fmt.Println("❌ Lỗi khi insert batch vào 'order':", err)
+	} else {
+		fmt.Printf("📥 Đã insert %d bản ghi vào CollectionOrder.\n", len(tempBatch))
+	}
+}
+
 
 func addToBatch(data map[string]interface{}) {
 	batchMutex.Lock()
