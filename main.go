@@ -33,7 +33,8 @@ var (
 	batchMutex     sync.Mutex
 )
 
-var mapStock map[string]interface{}
+var mapStock = make(map[string]map[string]interface{})
+
 
 func connectMongoDB() *mongo.Client {
 	// Cấu hình tùy chọn kết nối MongoDB
@@ -153,7 +154,7 @@ func processJsonData(input string) {
 	}
 
 	var code = input[:3]
-	println(code)
+	// println(code)
 
 	// Tìm JSON trong chuỗi
 	start := strings.Index(input, "{")
@@ -172,11 +173,39 @@ func processJsonData(input string) {
 	}
 	// Thêm timestamp vào dữ liệu
 	jsonData["time"] = time.Now()
-
-	fmt.Println(jsonData["symbol"])
-	
+	mapData(code, jsonData)
 	// Lưu vào batch
 	addToBatch(jsonData)
+}
+
+func mapData(code string, jsonData map[string]interface{}){
+		// fmt.Println(jsonData["symbol"])
+		symbolRaw, exists := jsonData["symbol"]
+		if !exists {
+			fmt.Println("❌ Không có trường 'symbol'")
+			return
+		}
+	
+		symbol, ok := symbolRaw.(string)
+		if !ok {
+			fmt.Println("❌ 'symbol' không phải kiểu string")
+			return
+		}
+	
+		// Nếu chưa có symbol đó trong mapStock
+		if _, found := mapStock[symbol]; !found {
+			// Tạo mới entry
+			mapStock[symbol] = jsonData
+		} else {
+			// Gộp từng key trong jsonData vào mapStock[symbol]
+			for k, v := range jsonData {
+				mapStock[symbol][k] = v
+			}
+		}
+	
+		if code == "s|6" {
+			fmt.Printf("%v\n", mapStock[symbol])
+		}
 }
 
 func addToBatch(data map[string]interface{}) {
