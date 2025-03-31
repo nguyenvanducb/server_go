@@ -21,7 +21,7 @@ const (
 	DBName       = "moneyflow"
 	Collection   = "stock_code"
 	WebsocketURL = "wss://openapi.tcbs.com.vn/ws/thesis/v1/stream/normal"
-	Token        = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcGlvcGVuLnRjYnMuY29tLnZuIiwiZXhwIjoxNzQyOTUzOTk3LCJqdGkiOiIiLCJpYXQiOjE3NDI4Njc1OTcsInN1YiI6IjEwMDAwNzE3MDYyIiwic3ViVHlwZSI6ImN1c3RvbWVyIiwiY3VzdG9keUlEIjoiMTA1QzEyODkxNyIsInRjYnNJZCI6IjEwMDAwNzE3MDYyIiwic2Vzc2lvbklEIjoiYzM5YTNhZGEtNjA4OC00MzU0LWFkYTgtMDgzZTgzZTk4ODAxIiwiY2xpZW50SUQiOiIxIiwic3Vic2NyaXB0aW9uIjoiYmFzaWMiLCJzY29wZSI6WyJib25kIiwiZnVuZCIsInN0b2NrIl0sInN0ZXB1cF9leHAiOjE3NDI4OTYzOTcsIm90cCI6IjczNTk2MyIsIm90cFR5cGUiOiJUT1RQIiwib3RwU291cmNlIjoiVENJTlZFU1QiLCJvdHBTZXNzaW9uSWQiOiIwMDQ4YWRiOS1mZDc5LTQwMDgtYWM0YS1kMjJlNDBjYjMwMWEiLCJhY2NvdW50VHlwZSI6InByaW1hcnkiLCJhY2NvdW50X3N0YXR1cyI6IjEiLCJlbWFpbCI6ImhvYW5nbWluaHRyaTk5QGdtYWlsLmNvbSIsInJvbGVzIjpbImN1c3RvbWVyIiwiQXBwbGljYXRpb24vT1BFTl9BUElfUElMT1QiXSwiY2xpZW50X2tleSI6Ik9MMEVWdE9XTDhISUVjaC9hV240MTlMQ2tBK0p5UXBYeW1naU9pRG1pSVdRMFFGcmFkc1RjKzBpNHZvRjdmWTUifQ.a7gzyxvCAn0oOHR87lcMReWKPkomXRoMzkrBlQzPA_2zEo-jc9yMa8KcaQDiRH4X4lWEm08onWtPCa8tpZ2wd07idJPRui5qnx5H3EtYrPzn-YqjJSgZdVZL_dNVOKD99vuKQmtC9dWVz25_4OcluzGj5k1raZKfWQG04tFzmHFi3b09dh2KI2_d-i3pcbt_Z3BeE1RMAkH1qSQI2Xo6hW2QGll0hzS5_ElO5kaFeBE1YX8L8hqbHCGam8e0KPJJAayKLAt8lOjWIt3C7zr2U_RC6GQz7UQ-iN8pbkTTznc0wOzwdc0SLEPCEOcvwinPvpjLaTpRBY7T0y0KtfuvGQ"
+	Token        = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcGlvcGVuLnRjYnMuY29tLnZuIiwiZXhwIjoxNzQzNDc1NTI5LCJqdGkiOiIiLCJpYXQiOjE3NDMzODkxMjksInN1YiI6IjEwMDAwNzE3MDYyIiwic3ViVHlwZSI6ImN1c3RvbWVyIiwiY3VzdG9keUlEIjoiMTA1QzEyODkxNyIsInRjYnNJZCI6IjEwMDAwNzE3MDYyIiwic2Vzc2lvbklEIjoiNjIwNmMxNGQtZDVkZi00NWEzLWFhZjQtZGFjMDcyNzg3MWRmIiwiY2xpZW50SUQiOiIxIiwic3Vic2NyaXB0aW9uIjoiYmFzaWMiLCJzY29wZSI6WyJib25kIiwiZnVuZCIsInN0b2NrIl0sInN0ZXB1cF9leHAiOjE3NDM0MTc5MjksIm90cCI6IjY4MzA4OSIsIm90cFR5cGUiOiJUT1RQIiwib3RwU291cmNlIjoiVENJTlZFU1QiLCJvdHBTZXNzaW9uSWQiOiJlNjY2OGJiNy1jOWRhLTRkN2ItYTU4OS0xODZhZjg1MmYyYjIiLCJhY2NvdW50VHlwZSI6InByaW1hcnkiLCJhY2NvdW50X3N0YXR1cyI6IjEiLCJlbWFpbCI6ImhvYW5nbWluaHRyaTk5QGdtYWlsLmNvbSIsInJvbGVzIjpbImN1c3RvbWVyIiwiQXBwbGljYXRpb24vT1BFTl9BUElfUElMT1QiXSwiY2xpZW50X2tleSI6Ik9MMEVWdE9XTDhISUVjaC9hV240MTlMQ2tBK0p5UXBYeW1naU9pRG1pSVdRMFFGcmFkc1RjKzBpNHZvRjdmWTUifQ.JtuRzKyl-B3o-b4OhgbnZHtS3yNufGS-IFo0c6R64WX-iqMede6nNgG22FmLAZnsF4PXcrgiTPaNKvrxxXMsTBE-EM82JjU-hY7Fk_3mKYGZ-i2C38YucwxKCia3DZheyuWcB44SFQbTy1XCj4Cse637gfMvlFJtVWJjasQGy7oCzdGjeBRZcxvsJWl9Nnteds0S4keDSTwOeV5xKLFOtJScio85DKVjQNkROSwQFzoCjbpgK3eA9UWyblog2WElIhjl_CviRdX8ME-f_HHDL24GDo_FFJjxSMn2G_pCd_bsxEq0P5hOMBg3oVGIqDIo-nFbDD2v47QCThcajCT8fw"
 	BatchSize    = 5 // Số lượng bản ghi trong một batch
 )
 
@@ -32,6 +32,8 @@ var (
 	batchData      []interface{}
 	batchMutex     sync.Mutex
 )
+
+var mapStock map[string]interface{}
 
 func connectMongoDB() *mongo.Client {
 	// Cấu hình tùy chọn kết nối MongoDB
@@ -150,6 +152,9 @@ func processJsonData(input string) {
 		return
 	}
 
+	var code = input[:3]
+	println(code)
+
 	// Tìm JSON trong chuỗi
 	start := strings.Index(input, "{")
 	end := strings.LastIndex(input, "}")
@@ -165,10 +170,11 @@ func processJsonData(input string) {
 		fmt.Println("❌ Lỗi giải mã JSON:", err)
 		return
 	}
-
 	// Thêm timestamp vào dữ liệu
 	jsonData["time"] = time.Now()
 
+	fmt.Println(jsonData["symbol"])
+	
 	// Lưu vào batch
 	addToBatch(jsonData)
 }
@@ -243,7 +249,7 @@ func restartPing() {
 }
 
 func subscribeStockPrices() {
-	subscribeMessage := "d|s|tk|bi+tm+op|ACB,BCM,BID,BVH,CTG,FPT,GAS,GVR,HDB,HPG,LPB,MBB,MSN,MWG,PLX,SAB,SHB,SSB,SSI,STB,TCB,TPB,VCB,VHM,VIB,VIC,VJC,VNM,VPB,VRE,MSB,OCB,ABB,VND,VCI,HCM,VIX,MBS,FTS,DXG,NLG,KDH,KBC,SZC,IDC,PVS,PVD,REE,PC1,POW,HHV,VCG,CTD,IJC,CTR,VTP,VGI,DGC,DPM,DCM,PAN,HAG,BSR,HDC,NVL"
+	subscribeMessage := "d|s|tk|bp+bi+tm+op+fe|ACB,BCM,BID,BVH,CTG,FPT,GAS,GVR,HDB,HPG,LPB,MBB,MSN,MWG,PLX,SAB,SHB,SSB,SSI,STB,TCB,TPB,VCB,VHM,VIB,VIC,VJC,VNM,VPB,VRE,MSB,OCB,ABB,VND,VCI,HCM,VIX,MBS,FTS,DXG,NLG,KDH,KBC,SZC,IDC,PVS,PVD,REE,PC1,POW,HHV,VCG,CTD,IJC,CTR,VTP,VGI,DGC,DPM,DCM,PAN,HAG,BSR,HDC,NVL"
 	err := conn.WriteMessage(websocket.TextMessage, []byte(subscribeMessage))
 	if err != nil {
 		fmt.Println("❌ Lỗi đăng ký nhận dữ liệu:", err)
