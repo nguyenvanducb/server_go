@@ -94,27 +94,30 @@ func main() {
 	// Kết nối WebSocket
 	connectWebSocket()
 }
-
 func connectWebSocket() {
-	var err error
-	conn, _, err = websocket.DefaultDialer.Dial(WebsocketURL, nil)
-	if err != nil {
-		log.Fatalf("❌ Lỗi kết nối WebSocket: %v", err)
-	}
-	defer conn.Close()
-	fmt.Println("✅ Kết nối WebSocket thành công!")
-
-	// Gửi xác thực
-	authenticate()
-
-	// Lắng nghe tin nhắn từ WebSocket
 	for {
-		_, message, err := conn.ReadMessage()
+		var err error
+		conn, _, err = websocket.DefaultDialer.Dial(WebsocketURL, nil)
 		if err != nil {
-			fmt.Println("🔥 Lỗi WebSocket:", err)
-			break
+			log.Printf("❌ Lỗi kết nối WebSocket: %v", err)
+			time.Sleep(2 * time.Second)
+			continue
 		}
-		handleMessage(string(message))
+		fmt.Println("✅ Kết nối WebSocket thành công!")
+
+		// Gửi xác thực
+		authenticate()
+
+		// Lắng nghe tin nhắn từ WebSocket
+		for {
+			_, message, err := conn.ReadMessage()
+			if err != nil {
+				fmt.Println("🔥 Lỗi WebSocket:", err)
+				conn.Close() // Đóng kết nối cũ
+				break        // Thoát vòng lặp đọc tin nhắn để thử kết nối lại
+			}
+			handleMessage(string(message))
+		}
 	}
 }
 
@@ -218,7 +221,7 @@ func addOrderToBatch(data map[string]interface{}) {
 	batchOrderMutex.Lock()
 	batchOrderData = append(batchOrderData, data)
 
-	if len(batchOrderData) >= BatchSize {
+	if len(batchOrderData) >= 1 {
 		saveOrderBatchToMongoDB()
 	}
 	batchOrderMutex.Unlock()
