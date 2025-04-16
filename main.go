@@ -22,7 +22,7 @@ const (
 	Collection      = "stock_code"
 	CollectionOrder = "orders"
 	WebsocketURL    = "wss://openapi.tcbs.com.vn/ws/thesis/v1/stream/normal"
-	Token           = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcGlvcGVuLnRjYnMuY29tLnZuIiwiZXhwIjoxNzQ0MzM2NjQ0LCJqdGkiOiIiLCJpYXQiOjE3NDQyNTAyNDQsInN1YiI6IjEwMDAwNzE3MDYyIiwic3ViVHlwZSI6ImN1c3RvbWVyIiwiY3VzdG9keUlEIjoiMTA1QzEyODkxNyIsInRjYnNJZCI6IjEwMDAwNzE3MDYyIiwic2Vzc2lvbklEIjoiODMwMDM1YzAtNThiZC00ZThkLWIzYzQtMzk1MTczYzRmMmQwIiwiY2xpZW50SUQiOiIxIiwic3Vic2NyaXB0aW9uIjoiYmFzaWMiLCJzY29wZSI6WyJib25kIiwiZnVuZCIsInN0b2NrIl0sInN0ZXB1cF9leHAiOjE3NDQyNzkwNDQsIm90cCI6IjczMDQ0OCIsIm90cFR5cGUiOiJUT1RQIiwib3RwU291cmNlIjoiVENJTlZFU1QiLCJvdHBTZXNzaW9uSWQiOiJkNWYxYmY2NC04ZTc3LTQ3NTktYjBiNC1kYjVjY2U1ZjljOTgiLCJhY2NvdW50VHlwZSI6InByaW1hcnkiLCJhY2NvdW50X3N0YXR1cyI6IjEiLCJlbWFpbCI6ImhvYW5nbWluaHRyaTk5QGdtYWlsLmNvbSIsInJvbGVzIjpbImN1c3RvbWVyIiwiQXBwbGljYXRpb24vT1BFTl9BUElfUElMT1QiXSwiY2xpZW50X2tleSI6Ik9MMEVWdE9XTDhISUVjaC9hV240MTlMQ2tBK0p5UXBYeW1naU9pRG1pSVdRMFFGcmFkc1RjKzBpNHZvRjdmWTUifQ.CRQWSr_86Z0VTeFNKouqys7v5QRLj7pzRQXOV0_q7VAtFLXPph-SsOl28MC6BpS9L9cYBKMV1PUjTnDZOFtwErPW6DCZuM1rfE3mMzvrXJIdv1Mu03B8vewL_J4Cz3JoQ76ymUFjZ6FQfywm1ey6EJg0Tm0wqUQKJjxC3f_uCvz2JQ-BzVmZJbaAtO60JbWDYoJVCop8DoqfrZRpIL8mUlc2gcY-A9GmPo8mGwkEalzMfTBIg_LnmzZtT9T9YNPRp0ssacrk_1SibiKdIb-1lMmaeqweNSkLVZcS12YJnE4l9xf0tQbKP66hVJLy8878WIxAjx0dN6VykL_GOdisqA"
+	Token           = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcGlvcGVuLnRjYnMuY29tLnZuIiwiZXhwIjoxNzQ0ODU0MTM5LCJqdGkiOiIiLCJpYXQiOjE3NDQ3Njc3MzksInN1YiI6IjEwMDAwNzE3MDYyIiwic3ViVHlwZSI6ImN1c3RvbWVyIiwiY3VzdG9keUlEIjoiMTA1QzEyODkxNyIsInRjYnNJZCI6IjEwMDAwNzE3MDYyIiwic2Vzc2lvbklEIjoiMTQ1N2QwNjctMDBiMC00ZGY2LWEwZWQtYjUyZmJlYjYzNTNkIiwiY2xpZW50SUQiOiIxIiwic3Vic2NyaXB0aW9uIjoiYmFzaWMiLCJzY29wZSI6WyJib25kIiwiZnVuZCIsInN0b2NrIl0sInN0ZXB1cF9leHAiOjE3NDQ3OTY1MzksIm90cCI6IjQ1NTk5MSIsIm90cFR5cGUiOiJUT1RQIiwib3RwU291cmNlIjoiVENJTlZFU1QiLCJvdHBTZXNzaW9uSWQiOiI2ZDNmYTg0NC1mYTEyLTRkNzctOGZhMS1lMWQ1Y2M5NDBiYmEiLCJhY2NvdW50VHlwZSI6InByaW1hcnkiLCJhY2NvdW50X3N0YXR1cyI6IjEiLCJlbWFpbCI6ImhvYW5nbWluaHRyaTk5QGdtYWlsLmNvbSIsInJvbGVzIjpbImN1c3RvbWVyIiwiQXBwbGljYXRpb24vT1BFTl9BUElfUElMT1QiXSwiY2xpZW50X2tleSI6Ik9MMEVWdE9XTDhISUVjaC9hV240MTlMQ2tBK0p5UXBYeW1naU9pRG1pSVdRMFFGcmFkc1RjKzBpNHZvRjdmWTUifQ.QFzXHeiyuTthlIpbol7pPa_cGpfhSCqf-yRLVZemEYEaYDa3jrRm4Tr7ULuqovAnceoJmiuafxSjlfwuR7cDOwETxrIIcC_ZYIuy0W-cUELT3odQSvHqqTKoiLw2Jrq4knElkGw5UOgiw-8wjyqmKNS4GFQF5JjZg9x7FyY-YdQBMkxR0DWkI_Luz8xJP1PiT3xQ6xXIeUhMQ4CgSlJ7pA6nrh23RH4FkMUjOZ8Ca3idEkIlKea1Egv6-pIW5N52oe7ltK9YGfkRvydCXILSTdtzFcGhlNm3Ig07QU01Dpg_lR1SdsoEOMjpC1w3re8DRXx36Y3Z_Z3JEbPgP_D7Iw"
 	BatchSize       = 2 // Số lượng bản ghi trong một batch
 )
 
@@ -39,6 +39,7 @@ var (
 	batchOrderData  []interface{}
 	batchOrderMutex sync.Mutex
 )
+var wsWriteLock sync.Mutex
 var dbCollectionOrder *mongo.Collection
 
 func connectMongoDB() *mongo.Client {
@@ -306,14 +307,21 @@ func restartPing() {
 	ticker := time.NewTicker(time.Duration(timeoutSeconds-5) * time.Second)
 	go func() {
 		for range ticker.C {
-			conn.WriteMessage(websocket.TextMessage, []byte("d|p|||"))
+			wsWriteLock.Lock()
+			err := conn.WriteMessage(websocket.TextMessage, []byte("d|p|||"))
+			wsWriteLock.Unlock()
+
+			if err != nil {
+				fmt.Println("❌ Lỗi khi gửi ping:", err)
+				return // hoặc xử lý reconnect tại đây
+			}
 			fmt.Println("📡 Gửi ping...")
 		}
 	}()
 }
 
 func subscribeStockPrices() {
-	subscribeMessage := "d|s|tk|bp+bi+tm+op+fe|ACB,BID,CTG,FPT,HDB,HPG,LPB,MBB,MSN,MWG,PLX,SHB,SSI,STB,TCB,TPB,VCB,VHM,VIB,VIC,VNM,VPB,VRE,MSB,HCM,KDH,REE,POW,HHV,VCG,DGC,HAG"
+	subscribeMessage := "d|s|tk|bp+bi+tm+op+fe|ACB,BCM,BID,CTG,FPT,HDB,HPG,LPB,MBB,MSN,MWG,PLX,SHB,SSI,STB,TCB,TPB,VCB,VHM,VIB,VIC,VNM,VPB,VRE,MSB,HCM,KDH,REE,POW,HHV,VCG,DGC,HAG"
 	err := conn.WriteMessage(websocket.TextMessage, []byte(subscribeMessage))
 	if err != nil {
 		fmt.Println("❌ Lỗi đăng ký nhận dữ liệu:", err)
