@@ -6,106 +6,521 @@
     <title>Bitcoin Chart Realtime</title>
     <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.development.js"></script>
     <style>
+      :root {
+        --chart-bg: #f5f5f5;
+        --green: #26a69a;
+        --red: #ef5350;
+        --text-color: #333;
+        --border-color: #ddd;
+      }
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        margin: 0;
+        padding: 16px;
+        background-color: #f9f9f9;
+      }
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        border-radius: 8px;
+        overflow: hidden;
+        background-color: white;
+      }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 20px;
+        background-color: #ffffff;
+        border-bottom: 1px solid var(--border-color);
+      }
+      .header h1 {
+        margin: 0;
+        font-size: 18px;
+        color: var(--text-color);
+      }
+      .controls {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      select {
+        padding: 8px 12px;
+        border-radius: 4px;
+        border: 1px solid var(--border-color);
+        background-color: white;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      select:focus {
+        outline: none;
+        border-color: #007bff;
+      }
       #chart {
         width: 100%;
-        height: 500px;
+        height: 550px;
+        position: relative;
       }
       #tooltip {
         position: absolute;
         display: none;
-        background-color: white;
-        border: 1px solid black;
-        padding: 5px;
+        background-color: rgba(255, 255, 255, 0.95);
+        border-radius: 4px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        padding: 10px;
         font-size: 12px;
         pointer-events: none;
+        z-index: 100;
+        max-width: 250px;
+      }
+      .tooltip-item {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 4px;
+      }
+      .tooltip-label {
+        font-weight: bold;
+        margin-right: 10px;
+      }
+      .stats {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 20px;
+        border-top: 1px solid var(--border-color);
+        background-color: #fafafa;
+        font-size: 14px;
+      }
+      .stat-item {
+        display: flex;
+        flex-direction: column;
+      }
+      .stat-label {
+        font-size: 12px;
+        color: #666;
+      }
+      .stat-value {
+        font-weight: bold;
+        color: var(--text-color);
+      }
+      .positive {
+        color: var(--green);
+      }
+      .negative {
+        color: var(--red);
+      }
+      /* Dark mode toggle */
+      .theme-toggle {
+        display: flex;
+        align-items: center;
+        margin-left: 10px;
+      }
+      .theme-toggle input {
+        position: absolute;
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+      .toggle-slider {
+        position: relative;
+        display: inline-block;
+        width: 40px;
+        height: 20px;
+        background-color: #ccc;
+        border-radius: 20px;
+        margin-left: 8px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+      }
+      .toggle-slider:before {
+        position: absolute;
+        content: "";
+        height: 16px;
+        width: 16px;
+        left: 2px;
+        bottom: 2px;
+        background-color: white;
+        border-radius: 50%;
+        transition: transform 0.3s;
+      }
+      input:checked + .toggle-slider {
+        background-color: #2196f3;
+      }
+      input:checked + .toggle-slider:before {
+        transform: translateX(20px);
+      }
+      /* Responsive styles */
+      @media (max-width: 768px) {
+        .header {
+          flex-direction: column;
+          gap: 10px;
+          align-items: flex-start;
+        }
+        .stats {
+          flex-wrap: wrap;
+          gap: 10px;
+        }
+        .controls {
+          width: 100%;
+          justify-content: space-between;
+        }
+      }
+      /* Dark mode */
+      body.dark-mode {
+        background-color: #121212;
+        color: #e0e0e0;
+      }
+      body.dark-mode .container {
+        background-color: #1e1e1e;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      }
+      body.dark-mode .header,
+      body.dark-mode .stats {
+        background-color: #232323;
+        border-color: #333;
+      }
+      body.dark-mode .header h1,
+      body.dark-mode .stat-value {
+        color: #e0e0e0;
+      }
+      body.dark-mode .stat-label {
+        color: #aaa;
+      }
+      body.dark-mode select {
+        background-color: #333;
+        color: #e0e0e0;
+        border-color: #444;
       }
     </style>
   </head>
   <body>
-    <select id="timeframe">
-      <option value="1d">1 Day</option>
-      <option value="4h">4 Hours</option>
-      <option value="1h">1 Hour</option>
-      <option value="30m">30 Minutes</option>
-      <option value="15m">15 Minutes</option>
-      <option value="5m">5 Minutes</option>
-      <option value="1m">1 Minute</option>
-    </select>
-    <div id="chart"></div>
-    <div id="tooltip"></div>
+    <div class="container">
+      <div class="header">
+        <h1>Bitcoin USDT Realtime Chart</h1>
+        <div class="controls">
+          <select id="timeframe">
+            <option value="1d">1 Day</option>
+            <option value="4h">4 Hours</option>
+            <option value="1h">1 Hour</option>
+            <option value="30m">30 Minutes</option>
+            <option value="15m">15 Minutes</option>
+            <option value="5m">5 Minutes</option>
+            <option value="1m">1 Minute</option>
+          </select>
+          <div class="theme-toggle">
+            <span>Dark</span>
+            <label>
+              <input type="checkbox" id="theme-toggle" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div id="chart"></div>
+      <div id="tooltip"></div>
+      <div class="stats">
+        <div class="stat-item">
+          <span class="stat-label">Last Price</span>
+          <span class="stat-value" id="last-price">--</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">24h Change</span>
+          <span class="stat-value" id="price-change">--</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">24h High</span>
+          <span class="stat-value" id="day-high">--</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">24h Low</span>
+          <span class="stat-value" id="day-low">--</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">24h Volume</span>
+          <span class="stat-value" id="day-volume">--</span>
+        </div>
+      </div>
+    </div>
     <script>
       if (typeof LightweightCharts === "undefined") {
         console.error("LightweightCharts library failed to load.");
       } else {
         const chartElement = document.getElementById("chart");
         const timeframeSelect = document.getElementById("timeframe");
+        const themeToggle = document.getElementById("theme-toggle");
+        const tooltip = document.getElementById("tooltip");
         let chart, candleSeries, volumeSeries;
+        let lastClose = null;
+        let isDarkTheme = false;
+        // Initialize theme from local storage
+        function initTheme() {
+          const savedTheme = localStorage.getItem("chartTheme");
+          if (savedTheme === "dark") {
+            isDarkTheme = true;
+            themeToggle.checked = true;
+            document.body.classList.add("dark-mode");
+          }
+        }
+        function toggleTheme() {
+          isDarkTheme = themeToggle.checked;
+          document.body.classList.toggle("dark-mode", isDarkTheme);
+          localStorage.setItem("chartTheme", isDarkTheme ? "dark" : "light");
+          updateChart();
+        }
         function createChart() {
           if (chart) chart.remove();
-          chart = LightweightCharts.createChart(chartElement, {
-            width: window.innerWidth * 0.9,
-            height: 500,
-            layout: { backgroundColor: "#ffffff", textColor: "#000" },
-            grid: {
-              vertLines: { color: "#eee" },
-              horzLines: { color: "#eee" },
+          const chartOptions = {
+            width: chartElement.clientWidth,
+            height: chartElement.clientHeight,
+            layout: {
+              backgroundColor: isDarkTheme ? "#1e1e1e" : "#ffffff",
+              textColor: isDarkTheme ? "#d1d4dc" : "#191919",
+              fontSize: 12,
+              fontFamily: "Segoe UI, sans-serif",
             },
-            timeScale: { timeVisible: true, borderColor: "#ccc" },
+            grid: {
+              vertLines: { color: isDarkTheme ? "#2e2e2e" : "#e6e6e6" },
+              horzLines: { color: isDarkTheme ? "#2e2e2e" : "#e6e6e6" },
+            },
+            crosshair: {
+              mode: LightweightCharts.CrosshairMode.Normal,
+              vertLine: {
+                width: 1,
+                color: isDarkTheme ? "#4c525e" : "#758696",
+                style: LightweightCharts.LineStyle.Dashed,
+              },
+              horzLine: {
+                width: 1,
+                color: isDarkTheme ? "#4c525e" : "#758696",
+                style: LightweightCharts.LineStyle.Dashed,
+              },
+            },
+            timeScale: {
+              timeVisible: true,
+              secondsVisible: false,
+              borderColor: isDarkTheme ? "#363636" : "#c8c8c8",
+            },
+            rightPriceScale: {
+              scaleMargins: {
+                top: 0.1,
+                bottom: 0.2,
+              },
+              borderColor: isDarkTheme ? "#363636" : "#c8c8c8",
+            },
+            handleScroll: {
+              mouseWheel: true,
+              pressedMouseMove: true,
+              horzTouchDrag: true,
+              vertTouchDrag: false,
+            },
+            handleScale: {
+              axisPressedMouseMove: true,
+              mouseWheel: true,
+              pinch: true,
+            },
+          };
+          const chartWidth = chartElement.clientWidth;
+          const minBarSpacing = chartWidth / 300;
+
+          chart = LightweightCharts.createChart(chartElement, {
+            width: chartWidth,
+            height: chartElement.clientHeight,
+            // ... các tùy chọn khác ...
+            timeScale: {
+              timeVisible: true,
+              secondsVisible: false,
+              borderColor: isDarkTheme ? "#363636" : "#c8c8c8",
+              minBarSpacing: minBarSpacing, // Giới hạn zoom tối thiểu
+            },
+            // ...
           });
-          candleSeries = chart.addCandlestickSeries();
+
+          // Set up series options based on theme
+          const candleSeriesOptions = {
+            upColor: "#26a69a",
+            downColor: "#ef5350",
+            borderVisible: false,
+            wickUpColor: "#26a69a",
+            wickDownColor: "#ef5350",
+            priceScaleId: "right",
+          };
+          candleSeries = chart.addCandlestickSeries(candleSeriesOptions);
+          // Add volume series
           volumeSeries = chart.addHistogramSeries({
-            color: "#26a69a",
             priceFormat: { type: "volume" },
-            priceScaleId: "",
-            scaleMargins: { top: 0.8, bottom: 0 },
+            priceScaleId: "volume",
+            scaleMargins: {
+              top: 0.8,
+              bottom: 0,
+            },
           });
+          // Configure the volume price scale
+          chart.priceScale("volume").applyOptions({
+            scaleMargins: {
+              top: 0.8,
+              bottom: 0,
+            },
+            visible: true,
+            autoScale: true,
+          });
+          // Set up tooltip
+          chart.subscribeCrosshairMove((param) => {
+            if (
+              param.point === undefined ||
+              !param.time ||
+              param.point.x < 0 ||
+              param.point.x > chartElement.clientWidth ||
+              param.point.y < 0 ||
+              param.point.y > chartElement.clientHeight
+            ) {
+              tooltip.style.display = "none";
+            } else {
+              const data = param.seriesData.get(candleSeries);
+              const volume = param.seriesData.get(volumeSeries);
+              if (data) {
+                const dateObj = new Date(param.time * 1000);
+                const formattedDate = dateObj.toLocaleDateString();
+                const formattedTime = dateObj.toLocaleTimeString();
+                tooltip.style.display = "block";
+                tooltip.style.left = param.point.x + "px";
+                tooltip.style.top = param.point.y + "px";
+                const volumeValue = volume
+                  ? formatLargeNumber(volume.value)
+                  : "N/A";
+                tooltip.innerHTML = `
+<div class="tooltip-item">
+<span class="tooltip-label">Date:</span>
+<span>${formattedDate}</span>
+</div>
+<div class="tooltip-item">
+<span class="tooltip-label">Time:</span>
+<span>${formattedTime}</span>
+</div>
+<div class="tooltip-item">
+<span class="tooltip-label">Open:</span>
+<span>$${data.open.toFixed(2)}</span>
+</div>
+<div class="tooltip-item">
+<span class="tooltip-label">High:</span>
+<span>$${data.high.toFixed(2)}</span>
+</div>
+<div class="tooltip-item">
+<span class="tooltip-label">Low:</span>
+<span>$${data.low.toFixed(2)}</span>
+</div>
+<div class="tooltip-item">
+<span class="tooltip-label">Close:</span>
+<span>$${data.close.toFixed(2)}</span>
+</div>
+<div class="tooltip-item">
+<span class="tooltip-label">Volume:</span>
+<span>${volumeValue}</span>
+</div>
+`;
+              }
+            }
+          });
+        }
+        function formatLargeNumber(num) {
+          if (num >= 1000000000) {
+            return (num / 1000000000).toFixed(2) + "B";
+          } else if (num >= 1000000) {
+            return (num / 1000000).toFixed(2) + "M";
+          } else if (num >= 1000) {
+            return (num / 1000).toFixed(2) + "K";
+          }
+          return num.toFixed(2);
         }
         async function fetchHistoricalData(interval) {
           try {
-            // const response = await fetch(
-            //   `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=365`
-            // );
             const response = await fetch(
-              `https://api.investing.com/api/financialdata/41063/historical/chart/?interval=P1D&pointscount=160`
+              `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=1000`
             );
-
-            // const data = await response.json();
-            // const formattedData = data.map((candle) => ({
-            //   time: candle[0] / 1000,
-            //   open: parseFloat(candle[1]),
-            //   high: parseFloat(candle[2]),
-            //   low: parseFloat(candle[3]),
-            //   close: parseFloat(candle[4]),
-            // }));
-            // candleSeries.setData(formattedData);
-
             const data = await response.json();
-            const formattedData = data.data.map((candle) => ({
-              time: candle[0] / 1000, // Đổi timestamp từ milliseconds sang seconds
+            const formattedData = data.map((candle) => ({
+              time: candle[0] / 1000,
               open: parseFloat(candle[1]),
               high: parseFloat(candle[2]),
               low: parseFloat(candle[3]),
               close: parseFloat(candle[4]),
             }));
             candleSeries.setData(formattedData);
-
             const volumeData = data.map((candle) => ({
               time: candle[0] / 1000,
               value: parseFloat(candle[5]),
               color:
                 parseFloat(candle[4]) >= parseFloat(candle[1])
-                  ? "#26a69a"
-                  : "#ef5350",
+                  ? isDarkTheme
+                    ? "rgba(38, 166, 154, 0.5)"
+                    : "rgba(38, 166, 154, 0.5)"
+                  : isDarkTheme
+                  ? "rgba(239, 83, 80, 0.5)"
+                  : "rgba(239, 83, 80, 0.5)",
             }));
             volumeSeries.setData(volumeData);
+            // Update the stats section with the latest data
+            updateStats(data);
+            // Store the last close price for reference
+            const lastCandle = data[data.length - 1];
+            lastClose = parseFloat(lastCandle[4]);
+            // Fit the visible range to the data
+            chart.timeScale().fitContent();
           } catch (error) {
             console.error("Error fetching historical data:", error);
           }
         }
+        function updateStats(data) {
+          if (!data || data.length === 0) return;
+          // Get the last 24 candles (assuming 1h timeframe is selected)
+          const last24Hours = data.slice(-24);
+          // Last price
+          const lastCandle = data[data.length - 1];
+          const lastPrice = parseFloat(lastCandle[4]);
+          document.getElementById("last-price").textContent =
+            "$" + lastPrice.toFixed(2);
+          // Calculate 24h change
+          const firstPrice = parseFloat(last24Hours[0][1]); // Open price of first candle
+          const priceChange = lastPrice - firstPrice;
+          const percentChange = ((priceChange / firstPrice) * 100).toFixed(2);
+          const changeElem = document.getElementById("price-change");
+          if (priceChange >= 0) {
+            changeElem.textContent = `+$${priceChange.toFixed(
+              2
+            )} (${percentChange}%)`;
+            changeElem.className = "stat-value positive";
+          } else {
+            changeElem.textContent = `-$${Math.abs(priceChange).toFixed(
+              2
+            )} (${percentChange}%)`;
+            changeElem.className = "stat-value negative";
+          }
+          // 24h High and Low
+          let high = -Infinity;
+          let low = Infinity;
+          let volume = 0;
+          last24Hours.forEach((candle) => {
+            const candleHigh = parseFloat(candle[2]);
+            const candleLow = parseFloat(candle[3]);
+            const candleVolume = parseFloat(candle[5]);
+            high = Math.max(high, candleHigh);
+            low = Math.min(low, candleLow);
+            volume += candleVolume;
+          });
+          document.getElementById("day-high").textContent =
+            "$" + high.toFixed(2);
+          document.getElementById("day-low").textContent = "$" + low.toFixed(2);
+          document.getElementById("day-volume").textContent =
+            formatLargeNumber(volume);
+        }
         function setupWebSocket(interval) {
+          // Close any existing websocket
+          if (window.btcWebSocket) {
+            window.btcWebSocket.close();
+          }
           const ws = new WebSocket(
             `wss://stream.binance.com:9443/ws/btcusdt@kline_${interval}`
           );
+          window.btcWebSocket = ws;
           ws.onmessage = (event) => {
             const message = JSON.parse(event.data);
             const kline = message.k;
@@ -122,23 +537,72 @@
               value: parseFloat(kline.v),
               color:
                 parseFloat(kline.c) >= parseFloat(kline.o)
-                  ? "#26a69a"
-                  : "#ef5350",
+                  ? isDarkTheme
+                    ? "rgba(38, 166, 154, 0.5)"
+                    : "rgba(38, 166, 154, 0.5)"
+                  : isDarkTheme
+                  ? "rgba(239, 83, 80, 0.5)"
+                  : "rgba(239, 83, 80, 0.5)",
             };
             volumeSeries.update(newVolume);
+            // Update last price
+            const currentPrice = parseFloat(kline.c);
+            document.getElementById("last-price").textContent =
+              "$" + currentPrice.toFixed(2);
+            // Highlight price change
+            if (lastClose !== null) {
+              const priceElem = document.getElementById("last-price");
+              if (currentPrice > lastClose) {
+                priceElem.className = "stat-value positive";
+                setTimeout(() => {
+                  priceElem.className = "stat-value";
+                }, 1000);
+              } else if (currentPrice < lastClose) {
+                priceElem.className = "stat-value negative";
+                setTimeout(() => {
+                  priceElem.className = "stat-value";
+                }, 1000);
+              }
+              lastClose = currentPrice;
+            }
           };
           ws.onerror = (error) => {
             console.error("WebSocket error:", error);
+          };
+          ws.onclose = () => {
+            console.log("WebSocket connection closed");
+            // Try to reconnect after a delay
+            setTimeout(() => {
+              if (window.btcWebSocket === ws) {
+                setupWebSocket(interval);
+              }
+            }, 5000);
           };
         }
         function updateChart() {
           const interval = timeframeSelect.value;
           createChart();
           fetchHistoricalData(interval);
-          //   setupWebSocket(interval);
+          setupWebSocket(interval);
         }
+        // Handle window resize
+        const resizeObserver = new ResizeObserver(() => {
+          if (chart) {
+            chart.applyOptions({
+              width: chartElement.clientWidth,
+            });
+          }
+        });
+        resizeObserver.observe(chartElement);
         timeframeSelect.addEventListener("change", updateChart);
+        themeToggle.addEventListener("change", toggleTheme);
+        // Initialize and start the chart
+        initTheme();
         updateChart();
+        // Periodically fetch new data to keep stats updated
+        setInterval(() => {
+          fetchHistoricalData(timeframeSelect.value);
+        }, 60000); // Update every minute
       }
     </script>
   </body>
