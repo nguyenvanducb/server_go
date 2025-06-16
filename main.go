@@ -85,6 +85,13 @@ func main() {
 	// client, err := mongo.Connect(context.TODO(), clientOptions)
 	otp := getUserInput("📥 Nhập OTP:")
 	fmt.Printf("✅ Bạn đã nhập: %s\n", otp)
+	token, err := GetAccessToken("10000717062-85bbf26d-7365-414f-ba3f-956a122c726b", otp)
+	fmt.Println("✅ Token lấy được:", token)
+
+	if err != nil {
+		fmt.Println("❌ Không lấy được token:", err)
+		return
+	}
 	client := connectMongoDB()
 
 	defer client.Disconnect(context.TODO())
