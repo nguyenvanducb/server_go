@@ -16,346 +16,190 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-var (
+const (
 	MongoDBURI      = "mongodb+srv://hos=true&w=majority&appName=Cluster0"
 	DBName          = "moneyflow"
 	Collection      = "stock_code"
 	CollectionOrder = "orders"
 	WebsocketURL    = "wss://openapi.tcbs.com.vn/ws/thesis/v1/stream/normal"
-	Token           = "" // sẽ gán sau khi lấy được
 	BatchSize       = 2
 )
 
-var (
-	conn           *websocket.Conn
-	dbCollection   *mongo.Collection
-	timeoutSeconds = 15
-	batchData      []interface{}
-	batchMutex     sync.Mutex
-)
-
-var mapStock = make(map[string]map[string]interface{})
-var (
-	batchOrderData  []interface{}
-	batchOrderMutex sync.Mutex
-)
-var wsWriteLock sync.Mutex
-var dbCollectionOrder *mongo.Collection
-
-func connectMongoDB() *mongo.Client {
-	// Cấu hình tùy chọn kết nối MongoDB
-	clientOptions := options.Client().
-		ApplyURI(MongoDBURI).
-		SetServerSelectionTimeout(10 * time.Second). // Tăng timeout chọn server
-		SetSocketTimeout(30 * time.Second).          // Timeout cho socket
-		SetMaxPoolSize(100).                         // Giới hạn số kết nối tối đa
-		SetMinPoolSize(5).                           // Giữ kết nối tối thiểu
-		SetHeartbeatInterval(10 * time.Second)       // Ping server để giữ kết nối
-
-	// Thử kết nối với MongoDB
-	var client *mongo.Client
-	var err error
-
-	for i := 0; i < 3; i++ { // Thử lại tối đa 3 lần
-		client, err = mongo.Connect(context.TODO(), clientOptions)
-		if err == nil {
-			break // Kết nối thành công, thoát vòng lặp
-		}
-		fmt.Printf("❌ Lỗi khi kết nối MongoDB (lần %d): %v\n", i+1, err)
-		time.Sleep(3 * time.Second) // Đợi 3 giây trước khi thử lại
-	}
-
-	if err != nil {
-		log.Fatalf("❌ Không thể kết nối MongoDB sau 3 lần thử: %v", err)
-	}
-
-	// Kiểm tra kết nối
-	err = client.Ping(context.TODO(), nil)
-	if err != nil {
-		log.Fatalf("❌ Không thể ping đến MongoDB: %v", err)
-	}
-
-	fmt.Println("✅ Kết nối thành công đến MongoDB!")
-	return client
+var stockGroups = [][]string{
+	{"ACB", "BCM", "BID"},
+	{"BVH", "CTG", "TCB"},
+	{"TPB", "VCB", "VHM", "VIB"},
 }
 
-func main() {
-	// Kết nối MongoDB
-	// clientOptions := options.Client().ApplyURI(MongoDBURI)
-	// client, err := mongo.Connect(context.TODO(), clientOptions)
-	otp := getUserInput("📥 Nhập OTP:")
-	fmt.Printf("✅ Bạn đã nhập: %s\n", otp)
+type BatchManager struct {
+	mutex sync.Mutex
+	data  []interface{}
+	coll  *mongo.Collection
+}
 
-	accessToken, err := GetAccessToken("10000717062-85bbf26d-7365-414f-ba3f-956a122c726b", otp)
-	if err != nil {
-		log.Fatalf("❌ Lỗi lấy token: %v", err)
+type OrderBatchManager struct {
+	mutex sync.Mutex
+	data  []interface{}
+	coll  *mongo.Collection
+}
+
+func (bm *BatchManager) Add(data map[string]interface{}) {
+	bm.mutex.Lock()
+	defer bm.mutex.Unlock()
+
+	bm.data = append(bm.data, data)
+	if len(bm.data) >= BatchSize {
+		bm.save()
 	}
-	Token = accessToken
-	fmt.Println("✅ Token lấy được:", Token)
+}
 
-	if err != nil {
-		fmt.Println("❌ Không lấy được token:", err)
+func (bm *BatchManager) save() {
+	if len(bm.data) == 0 {
 		return
 	}
-	client := connectMongoDB()
+	temp := bm.data
+	bm.data = nil
 
-	defer client.Disconnect(context.TODO())
+	var writes []mongo.WriteModel
+	for _, d := range temp {
+		doc, ok := d.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		symbol, ok := doc["symbol"].(string)
+		if !ok {
+			continue
+		}
+		filter := bson.M{"symbol": symbol}
+		update := bson.M{"$set": doc}
+		writes = append(writes, mongo.NewUpdateOneModel().SetFilter(filter).SetUpdate(update).SetUpsert(true))
+	}
 
-	fmt.Println("✅ Kết nối thành công đến MongoDB!")
-
-	dbCollection = client.Database(DBName).Collection(Collection)
-	dbCollectionOrder = client.Database(DBName).Collection(CollectionOrder)
-
-	// Kết nối WebSocket
-	connectWebSocket()
-}
-func connectWebSocket() {
-	for {
-		var err error
-		conn, _, err = websocket.DefaultDialer.Dial(WebsocketURL, nil)
+	if len(writes) > 0 {
+		_, err := bm.coll.BulkWrite(context.TODO(), writes)
 		if err != nil {
-			log.Printf("❌ Lỗi kết nối WebSocket: %v", err)
+			log.Println("❌ Lỗi cập nhật batch:", err)
+		} else {
+			log.Printf("✅ Đã cập nhật %d bản ghi\n", len(temp))
+		}
+	}
+}
+
+func (obm *OrderBatchManager) Add(data map[string]interface{}) {
+	obm.mutex.Lock()
+	defer obm.mutex.Unlock()
+	obm.data = append(obm.data, data)
+	if len(obm.data) >= 1 {
+		obm.save()
+	}
+}
+
+func (obm *OrderBatchManager) save() {
+	if len(obm.data) == 0 {
+		return
+	}
+	temp := obm.data
+	obm.data = nil
+	_, err := obm.coll.InsertMany(context.TODO(), temp)
+	if err != nil {
+		log.Println("❌ Lỗi insert Order:", err)
+	} else {
+		log.Printf("📥 Đã insert %d bản ghi Order\n", len(temp))
+	}
+}
+
+func startWebSocketGroup(group []string, token string, db *mongo.Database) {
+	for {
+		conn, _, err := websocket.DefaultDialer.Dial(WebsocketURL, nil)
+		if err != nil {
+			log.Printf("❌ WS lỗi %v: %v", group, err)
 			time.Sleep(2 * time.Second)
 			continue
 		}
-		fmt.Println("✅ Kết nối WebSocket thành công!")
+		log.Printf("✅ WS kết nối nhóm: %v\n", group)
 
-		// Gửi xác thực
-		authenticate()
+		bm := &BatchManager{coll: db.Collection(Collection)}
+		obm := &OrderBatchManager{coll: db.Collection(CollectionOrder)}
 
-		// Lắng nghe tin nhắn từ WebSocket
+		base64Token := base64.StdEncoding.EncodeToString([]byte(token))
+		authMsg := fmt.Sprintf("d|a|||%s", base64Token)
+		conn.WriteMessage(websocket.TextMessage, []byte(authMsg))
+
+		subMsg := fmt.Sprintf("d|s|tk|bp+bi+tm+op+fe|%s", strings.Join(group, ","))
+		conn.WriteMessage(websocket.TextMessage, []byte(subMsg))
+
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				conn.WriteMessage(websocket.TextMessage, []byte("d|p|||"))
+			}
+		}()
+
 		for {
-			_, message, err := conn.ReadMessage()
+			_, msg, err := conn.ReadMessage()
 			if err != nil {
-				fmt.Println("🔥 Lỗi WebSocket:", err)
-				conn.Close() // Đóng kết nối cũ
-				break        // Thoát vòng lặp đọc tin nhắn để thử kết nối lại
+				log.Printf("🔥 Mất kết nối nhóm %v: %v", group, err)
+				conn.Close()
+				break
 			}
-			handleMessage(string(message))
+			handleMessageForGroup(string(msg), bm, obm)
 		}
 	}
 }
 
-func authenticate() {
-	base64Token := base64.StdEncoding.EncodeToString([]byte(Token))
-	authMessage := fmt.Sprintf("d|a|||%s", base64Token)
-	err := conn.WriteMessage(websocket.TextMessage, []byte(authMessage))
-	if err != nil {
-		fmt.Println("❌ Lỗi gửi xác thực:", err)
-	}
-}
-
-func handleMessage(message string) {
-	if strings.HasPrefix(message, "d|33|") {
-		// Cập nhật timeout từ server
-		parts := strings.Split(message, "|")
-		if len(parts) == 3 {
-			newTimeout := parseInt(parts[2], 15)
-			fmt.Printf("⏳ Cập nhật timeout: %d giây\n", newTimeout)
-			timeoutSeconds = newTimeout
-			restartPing()
-		}
-	} else if strings.HasPrefix(message, "d|0|") {
-		// Xác thực thành công
-		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(message[4:]), &data); err == nil {
-			if success, ok := data["success"].(bool); ok && success {
-				fmt.Println("✅ Xác thực thành công!")
-				subscribeStockPrices()
-			} else {
-				fmt.Println("❌ Xác thực thất bại:", data["error"])
-			}
-		}
-	} else {
-		// Xử lý JSON từ WebSocket
-		processJsonData(message)
-	}
-}
-
-func processJsonData(input string) {
-	if len(input) < 20 {
+func handleMessageForGroup(message string, bm *BatchManager, obm *OrderBatchManager) {
+	if strings.HasPrefix(message, "d|0|") {
 		return
 	}
-
-	var code = input[:3]
-	// println(code)
-
-	// Tìm JSON trong chuỗi
-	start := strings.Index(input, "{")
-	end := strings.LastIndex(input, "}")
+	start := strings.Index(message, "{")
+	end := strings.LastIndex(message, "}")
 	if start == -1 || end == -1 || start >= end {
-		fmt.Println("Không tìm thấy JSON hợp lệ.")
 		return
 	}
-
-	jsonString := input[start : end+1]
-	var jsonData map[string]interface{}
-
-	if err := json.Unmarshal([]byte(jsonString), &jsonData); err != nil {
-		fmt.Println("❌ Lỗi giải mã JSON:", err)
+	jsonStr := message[start : end+1]
+	var data map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return
 	}
-	// Thêm timestamp vào dữ liệu
-	jsonData["time"] = time.Now()
-	mapData(code, jsonData)
-	// Lưu vào batch
-	addToBatch(jsonData)
-}
+	data["time"] = time.Now()
+	bm.Add(data)
 
-func mapData(code string, jsonData map[string]interface{}) {
-	symbolRaw, exists := jsonData["symbol"]
-	if !exists {
-		fmt.Println("❌ Không có trường 'symbol'")
-		return
-	}
-
-	symbol, ok := symbolRaw.(string)
-	if !ok {
-		fmt.Println("❌ 'symbol' không phải kiểu string")
-		return
-	}
-
-	// Cập nhật mapStock
-	if _, found := mapStock[symbol]; !found {
-		mapStock[symbol] = jsonData
-	} else {
-		for k, v := range jsonData {
-			mapStock[symbol][k] = v
-		}
-	}
-	// fmt.Println(mapStock[symbol])
-
-	// 👇 Nếu code là "s|6", đưa vào batch "order"
-	if code == "s|6" {
-		addOrderToBatch(mapStock[symbol])
-		// fmt.Printf("📥 Đưa vào batch Order: %v\n", jsonData)
+	if strings.HasPrefix(message, "s|6") {
+		obm.Add(data)
 	}
 }
 
-func addOrderToBatch(data map[string]interface{}) {
-	batchOrderMutex.Lock()
-	batchOrderData = append(batchOrderData, data)
-
-	if len(batchOrderData) >= 1 {
-		saveOrderBatchToMongoDB()
-	}
-	batchOrderMutex.Unlock()
-}
-
-func saveOrderBatchToMongoDB() {
-	if len(batchOrderData) == 0 {
-		return
-	}
-
-	tempBatch := batchOrderData
-	batchOrderData = nil
-
-	_, err := dbCollectionOrder.InsertMany(context.TODO(), tempBatch)
+func connectMongoDB() *mongo.Client {
+	opt := options.Client().ApplyURI(MongoDBURI).SetServerSelectionTimeout(10 * time.Second).SetSocketTimeout(30 * time.Second)
+	client, err := mongo.Connect(context.TODO(), opt)
 	if err != nil {
-		fmt.Println("❌ Lỗi khi insert batch vào 'order':", err)
-	} else {
-		fmt.Printf("📥 Đã insert %d bản ghi vào CollectionOrder.\n", len(tempBatch))
+		log.Fatal("❌ Mongo connect lỗi:", err)
 	}
+	if err := client.Ping(context.TODO(), nil); err != nil {
+		log.Fatal("❌ Mongo ping lỗi:", err)
+	}
+	log.Println("✅ MongoDB connected")
+	return client
 }
 
-func addToBatch(data map[string]interface{}) {
-	batchMutex.Lock()
-	batchData = append(batchData, data)
-
-	// Nếu đạt batchSize, lưu vào MongoDB
-	if len(batchData) >= BatchSize {
-		saveBatchToMongoDB()
-	}
-	batchMutex.Unlock()
-}
-func saveBatchToMongoDB() {
-	if len(batchData) == 0 {
-		return
-	}
-
-	// Copy dữ liệu batch và làm rỗng batchData
-	tempBatch := batchData
-	batchData = nil // Xóa dữ liệu gốc để tránh ghi đè
-
-	// Cập nhật dữ liệu theo symbol thay vì chèn mới
-	var writes []mongo.WriteModel
-
-	for _, d := range tempBatch {
-		// Ép kiểu data về đúng dạng map[string]interface{}
-		data, ok := d.(map[string]interface{})
-		if !ok {
-			fmt.Println("❌ Dữ liệu không hợp lệ, bỏ qua:", d)
-			continue
-		}
-
-		// Lấy symbol
-		symbol, ok := data["symbol"].(string)
-		if !ok {
-			fmt.Println("❌ Dữ liệu thiếu 'symbol', bỏ qua:", data)
-			continue
-		}
-
-		// Tạo bộ lọc và cập nhật
-		filter := bson.M{"symbol": symbol}
-		update := bson.M{"$set": data}
-
-		// Sử dụng bulk update
-		writes = append(writes, mongo.NewUpdateOneModel().
-			SetFilter(filter).
-			SetUpdate(update).
-			SetUpsert(true))
-	}
-
-	// Thực hiện cập nhật hàng loạt (bulk write)
-	if len(writes) > 0 {
-		_, err := dbCollection.BulkWrite(context.TODO(), writes)
-		if err != nil {
-			fmt.Println("❌ Lỗi khi cập nhật batch vào MongoDB:", err)
-		} else {
-			fmt.Printf("✅ Đã cập nhật %d bản ghi vào MongoDB.\n", len(tempBatch))
-		}
-	}
-}
-
-func restartPing() {
-	ticker := time.NewTicker(time.Duration(timeoutSeconds-5) * time.Second)
-	go func() {
-		for range ticker.C {
-			wsWriteLock.Lock()
-			err := conn.WriteMessage(websocket.TextMessage, []byte("d|p|||"))
-			wsWriteLock.Unlock()
-
-			if err != nil {
-				fmt.Println("❌ Lỗi khi gửi ping:", err)
-				return // hoặc xử lý reconnect tại đây
-			}
-			fmt.Println("📡 Gửi ping...")
-		}
-	}()
-}
-
-func subscribeStockPrices() {
-	subscribeMessage := "d|s|tk|bp+bi+tm+op+fe|ACB,BCM,BID,BVH,CTG,TCB,TPB,VCB,VHM,VIB"
-	err := conn.WriteMessage(websocket.TextMessage, []byte(subscribeMessage))
-	if err != nil {
-		fmt.Println("❌ Lỗi đăng ký nhận dữ liệu:", err)
-	} else {
-		fmt.Println("📈 Đăng ký nhận dữ liệu cổ phiếu: ACB, SSI, HPG, MBB")
-	}
-}
-
-func parseInt(str string, defaultValue int) int {
-	var value int
-	_, err := fmt.Sscanf(str, "%d", &value)
-	if err != nil {
-		return defaultValue
-	}
-	return value
-}
-
-func getUserInput(prompt string) string { // nhập giá trị
+func getUserInput(prompt string) string {
 	fmt.Print(prompt)
 	var input string
 	fmt.Scanln(&input)
 	return input
 }
+
+func main() {
+	otp := getUserInput("📥 Nhập OTP: ")
+	token, err := GetAccessToken("10000717062-85bbf26d-7365-414f-ba3f-956a122c726b", otp)
+	if err != nil {
+		log.Fatal("❌ Lỗi token:", err)
+	}
+	client := connectMongoDB()
+	db := client.Database(DBName)
+	for _, group := range stockGroups {
+		go startWebSocketGroup(group, token, db)
+	}
+	select {} // Giữ chương trình chạy
+} // bạn cần thêm hàm GetAccessToken từ file cũ hoặc import từ file riêng
