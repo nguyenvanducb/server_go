@@ -22,7 +22,7 @@ const (
 	Collection      = "stock_code"
 	CollectionOrder = "orders"
 	WebsocketURL    = "wss://openapi.tcbs.com.vn/ws/thesis/v1/stream/normal"
-	Token           = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcGlvcGVuLnRjYnMuY29tLnZuIiwiZXhwIjoxNzQ4MDUzNzg1LCJqdGkiOiIiLCJpYXQiOjE3NDc5NjczODUsInN1YiI6IjEwMDAwNzE3MDYyIiwic3ViVHlwZSI6ImN1c3RvbWVyIiwiY3VzdG9keUlEIjoiMTA1QzEyODkxNyIsInRjYnNJZCI6IjEwMDAwNzE3MDYyIiwic2Vzc2lvbklEIjoiM2Q0YThhYTctM2FiNS00NWEyLThkYTEtZjFmMGE4OGI2NTJjIiwiY2xpZW50SUQiOiIxIiwic3Vic2NyaXB0aW9uIjoiYmFzaWMiLCJzY29wZSI6WyJib25kIiwiZnVuZCIsInN0b2NrIl0sInN0ZXB1cF9leHAiOjE3NDc5OTYxODUsIm90cCI6IjYwNDU3MCIsIm90cFR5cGUiOiJUT1RQIiwib3RwU291cmNlIjoiVENJTlZFU1QiLCJvdHBTZXNzaW9uSWQiOiI3YTllYTI1MS1kMzhlLTQ0NTItODM1MC02MTQ2Zjk1NTBkNzAiLCJhY2NvdW50VHlwZSI6InByaW1hcnkiLCJhY2NvdW50X3N0YXR1cyI6IjEiLCJlbWFpbCI6ImhvYW5nbWluaHRyaTk5QGdtYWlsLmNvbSIsInJvbGVzIjpbImN1c3RvbWVyIiwiQXBwbGljYXRpb24vT1BFTl9BUElfUElMT1QiXSwiY2xpZW50X2tleSI6Ik9MMEVWdE9XTDhISUVjaC9hV240MTlMQ2tBK0p5UXBYeW1naU9pRG1pSVdRMFFGcmFkc1RjKzBpNHZvRjdmWTUifQ.YvvPmuhBMCxmYV1n7t2RD0ruZtai1m6ySYIIKgWSlu99HVGDsV75hCRTgAhvPrODkvnlKU_lFQ8K_JSfClcZhp1bUvlxT-TgDTzR-5Plsz4CMW5IwKilZSGJJ8dDWGGkXUqPoRhsh6tD6oFJF7I2VWW8MxBqep01CX98QHgXcT8dEkh7u9tmvU3VL9kwC5atz98tdYI5ntARc_fY3r-0TDK5-PjN8Vm79t8qNJrXq3K35YlwmaAEh1-_vbutnQoznB9nfZp38rT-mnQIx0byuoqEJxyb2nwzbryRk9t8Hq1VuIMzgUkXr4CoVzAHmkwoUtBfXMisQrpOOKSz7PTGbQ"
+	Token           = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcGlvcGVuLnRjYnMuY29tLnZuIiwiZXhwIjoxNzUwMTcwNTUxLCJqdGkiOiIiLCJpYXQiOjE3NTAwODQxNTEsInN1YiI6IjEwMDAwNzE3MDYyIiwic3ViVHlwZSI6ImN1c3RvbWVyIiwiY3VzdG9keUlEIjoiMTA1QzEyODkxNyIsInRjYnNJZCI6IjEwMDAwNzE3MDYyIiwic2Vzc2lvbklEIjoiMjJjNjU2YWItMjc1ZS00ZmMyLTljNDUtNmFlZGFkZDNmM2Q1IiwiY2xpZW50SUQiOiIxIiwic3Vic2NyaXB0aW9uIjoiYmFzaWMiLCJzY29wZSI6WyJib25kIiwiZnVuZCIsInN0b2NrIl0sInN0ZXB1cF9leHAiOjE3NTAxMTI5NTEsIm90cCI6IjAyOTE1MSIsIm90cFR5cGUiOiJUT1RQIiwib3RwU291cmNlIjoiVENJTlZFU1QiLCJvdHBTZXNzaW9uSWQiOiIyZTM3NTU2ZC03ZTIwLTQxOWItYWM5MC1kZGQ4ODg4ZGY1MTQiLCJhY2NvdW50VHlwZSI6InByaW1hcnkiLCJhY2NvdW50X3N0YXR1cyI6IjEiLCJlbWFpbCI6ImhvYW5nbWluaHRyaTk5QGdtYWlsLmNvbSIsInJvbGVzIjpbImN1c3RvbWVyIiwiQXBwbGljYXRpb24vT1BFTl9BUElfUElMT1QiXSwiY2xpZW50X2tleSI6Ik9MMEVWdE9XTDhISUVjaC9hV240MTlMQ2tBK0p5UXBYeW1naU9pRG1pSVdRMFFGcmFkc1RjKzBpNHZvRjdmWTUifQ.Ssq1eF1m7-JtcM1Kvohf901LmPitu8v6IdqGMgqIxnUA3CCI3h-Dk0DunJeDSlTVdtVgaddF4q4wayS8c8VVUpkukV-Bhb7hzJ59eYkzDLodcmkp9WL7W5qsGKJWLKu8YO_hyWTALcqISQqCaRb-aeuFQ9QsC5kXmrDApVarGeDKs81OCi2awcYwsvm4qWQwFJQvLmRiOV7fowKdoArYxQ_SpbQ8tI7c3KXRBibmMaZl86sDt1oLMcL8ARzbn29FKBGVibgILbNMnX71vmxoIeNtpXqqUzujVRfdkGD2PUh7p3KHhOOnW8AfPFyYv34ZtrJ-t0VMa5yNdQDLsODEUA"
 	BatchSize       = 2 // Số lượng bản ghi trong một batch
 )
 
@@ -83,6 +83,8 @@ func main() {
 	// Kết nối MongoDB
 	// clientOptions := options.Client().ApplyURI(MongoDBURI)
 	// client, err := mongo.Connect(context.TODO(), clientOptions)
+	otp := getUserInput("📥 Nhập OTP:")
+	fmt.Printf("✅ Bạn đã nhập: %s\n", otp)
 	client := connectMongoDB()
 
 	defer client.Disconnect(context.TODO())
@@ -337,4 +339,11 @@ func parseInt(str string, defaultValue int) int {
 		return defaultValue
 	}
 	return value
+}
+
+func getUserInput(prompt string) string { // nhập giá trị
+	fmt.Print(prompt)
+	var input string
+	fmt.Scanln(&input)
+	return input
 }
