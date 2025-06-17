@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	MongoDBURI      = "mongodb+srv://hos=true&w=majority&appName=Cluster0"
+	MongoDBURI      = "mongodb+srv://hoangminhtri99:ster0.lu5ww.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 	DBName          = "moneyflow"
 	Collection      = "stock_code"
 	CollectionOrder = "orders"
@@ -26,9 +26,9 @@ const (
 )
 
 var stockGroups = [][]string{
-	{"ACB", "BCM", "BID"},
-	{"BVH", "CTG", "TCB"},
-	{"TPB", "VCB", "VHM", "VIB"},
+	{"ACB", "BCM", "BID", "CTG", "TCB", "VCB", "VHM", "VIB", "SSI", "STB"},
+	{"FPT", "GAS", "GVR", "HDB", "HPG", "SAB", "SHB", "SSB", "TPB", "BVH"},
+	{"LPB", "MBB", "MSN", "MWG", "PLX", "VIC", "VJC", "VNM", "VPB", "VRE"},
 }
 
 type BatchManager struct {
