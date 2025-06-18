@@ -43,6 +43,49 @@ type OrderBatchManager struct {
 	coll  *mongo.Collection
 }
 
+// Map lưu trữ dữ liệu stock theo symbol, thread-safe
+type StockMap struct {
+	mutex sync.RWMutex
+	data  map[string]map[string]interface{}
+}
+
+func NewStockMap() *StockMap {
+	return &StockMap{
+		data: make(map[string]map[string]interface{}),
+	}
+}
+
+func (sm *StockMap) Update(symbol string, newData map[string]interface{}) {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+
+	if _, exists := sm.data[symbol]; !exists {
+		sm.data[symbol] = make(map[string]interface{})
+	}
+
+	// Cập nhật dữ liệu
+	for k, v := range newData {
+		sm.data[symbol][k] = v
+	}
+}
+
+func (sm *StockMap) Get(symbol string) (map[string]interface{}, bool) {
+	sm.mutex.RLock()
+	defer sm.mutex.RUnlock()
+
+	data, exists := sm.data[symbol]
+	if !exists {
+		return nil, false
+	}
+
+	// Tạo bản copy để tránh race condition
+	result := make(map[string]interface{})
+	for k, v := range data {
+		result[k] = v
+	}
+	return result, true
+}
+
 func (bm *BatchManager) Add(data map[string]interface{}) {
 	bm.mutex.Lock()
 	defer bm.mutex.Unlock()
@@ -109,6 +152,8 @@ func (obm *OrderBatchManager) save() {
 }
 
 func startWebSocketGroup(group []string, token string, db *mongo.Database) {
+	stockMap := NewStockMap()
+
 	for {
 		conn, _, err := websocket.DefaultDialer.Dial(WebsocketURL, nil)
 		if err != nil {
@@ -128,14 +173,20 @@ func startWebSocketGroup(group []string, token string, db *mongo.Database) {
 		subMsg := fmt.Sprintf("d|s|tk|bp+bi+tm+op+fe|%s", strings.Join(group, ","))
 		conn.WriteMessage(websocket.TextMessage, []byte(subMsg))
 
+		// Ping goroutine
 		go func() {
 			ticker := time.NewTicker(10 * time.Second)
 			defer ticker.Stop()
 			for range ticker.C {
-				conn.WriteMessage(websocket.TextMessage, []byte("d|p|||"))
+				if err := conn.WriteMessage(websocket.TextMessage, []byte("d|p|||")); err != nil {
+					log.Printf("❌ Ping lỗi nhóm %v: %v", group, err)
+					ticker.Stop()
+					return
+				}
 			}
 		}()
 
+		// Đọc messages
 		for {
 			_, msg, err := conn.ReadMessage()
 			if err != nil {
@@ -143,42 +194,97 @@ func startWebSocketGroup(group []string, token string, db *mongo.Database) {
 				conn.Close()
 				break
 			}
-			handleMessageForGroup(string(msg), bm, obm)
+			handleMessageForGroup(string(msg), bm, obm, stockMap)
 		}
 	}
 }
 
-func handleMessageForGroup(message string, bm *BatchManager, obm *OrderBatchManager) {
+func handleMessageForGroup(message string, bm *BatchManager, obm *OrderBatchManager, stockMap *StockMap) {
+	// Bỏ qua authentication response
 	if strings.HasPrefix(message, "d|0|") {
 		return
 	}
+
+	// Lấy code từ đầu message (3 ký tự đầu)
+	if len(message) < 20 {
+		return
+	}
+
+	code := message[:3]
+
+	// Tìm JSON trong message
 	start := strings.Index(message, "{")
 	end := strings.LastIndex(message, "}")
 	if start == -1 || end == -1 || start >= end {
 		return
 	}
+
 	jsonStr := message[start : end+1]
-	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	var jsonData map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &jsonData); err != nil {
 		return
 	}
-	data["time"] = time.Now()
-	bm.Add(data)
 
-	if strings.HasPrefix(message, "s|6") {
-		obm.Add(data)
+	// Thêm timestamp
+	jsonData["time"] = time.Now()
+
+	// Lấy symbol
+	symbolRaw, exists := jsonData["symbol"]
+	if !exists {
+		return
+	}
+
+	symbol, ok := symbolRaw.(string)
+	if !ok {
+		return
+	}
+
+	// Cập nhật stockMap
+	stockMap.Update(symbol, jsonData)
+
+	// Thêm vào batch chung
+	bm.Add(jsonData)
+
+	// Kiểm tra code để quyết định có đẩy vào CollectionOrder không
+	if code == "s|2" || code == "s|6" {
+		// Lấy dữ liệu đầy đủ từ stockMap
+		if fullData, exists := stockMap.Get(symbol); exists {
+			obm.Add(fullData)
+			log.Printf("📥 Đưa vào batch Order (code: %s): %s\n", code, symbol)
+		}
 	}
 }
 
 func connectMongoDB() *mongo.Client {
-	opt := options.Client().ApplyURI(MongoDBURI).SetServerSelectionTimeout(10 * time.Second).SetSocketTimeout(30 * time.Second)
-	client, err := mongo.Connect(context.TODO(), opt)
-	if err != nil {
-		log.Fatal("❌ Mongo connect lỗi:", err)
+	opt := options.Client().
+		ApplyURI(MongoDBURI).
+		SetServerSelectionTimeout(10 * time.Second).
+		SetSocketTimeout(30 * time.Second).
+		SetMaxPoolSize(100).
+		SetMinPoolSize(5).
+		SetHeartbeatInterval(10 * time.Second)
+
+	var client *mongo.Client
+	var err error
+
+	// Retry connection up to 3 times
+	for i := 0; i < 3; i++ {
+		client, err = mongo.Connect(context.TODO(), opt)
+		if err == nil {
+			break
+		}
+		log.Printf("❌ Mongo connect lỗi (lần %d): %v", i+1, err)
+		time.Sleep(3 * time.Second)
 	}
+
+	if err != nil {
+		log.Fatal("❌ Không thể kết nối MongoDB sau 3 lần thử:", err)
+	}
+
 	if err := client.Ping(context.TODO(), nil); err != nil {
 		log.Fatal("❌ Mongo ping lỗi:", err)
 	}
+
 	log.Println("✅ MongoDB connected")
 	return client
 }
@@ -192,14 +298,26 @@ func getUserInput(prompt string) string {
 
 func main() {
 	otp := getUserInput("📥 Nhập OTP: ")
+	fmt.Printf("✅ Bạn đã nhập: %s\n", otp)
+
 	token, err := GetAccessToken("10000717062-85bbf26d-7365-414f-ba3f-956a122c726b", otp)
 	if err != nil {
 		log.Fatal("❌ Lỗi token:", err)
 	}
+
 	client := connectMongoDB()
+	defer client.Disconnect(context.TODO())
+
 	db := client.Database(DBName)
-	for _, group := range stockGroups {
+
+	// Start WebSocket connections for each group
+	for i, group := range stockGroups {
 		go startWebSocketGroup(group, token, db)
+		log.Printf("🚀 Khởi động WebSocket nhóm %d: %v", i+1, group)
 	}
+
+	log.Println("🎯 Tất cả WebSocket đã khởi động. Nhấn Ctrl+C để thoát...")
 	select {} // Giữ chương trình chạy
-} // bạn cần thêm hàm GetAccessToken từ file cũ hoặc import từ file riêng
+}
+
+// Bạn cần thêm hàm GetAccessToken từ file cũ hoặc import từ file riêng
