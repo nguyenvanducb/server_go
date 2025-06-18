@@ -165,8 +165,11 @@ func handleMessageForGroup(message string, bm *BatchManager, obm *OrderBatchMana
 	data["time"] = time.Now()
 	bm.Add(data)
 
-	if strings.HasPrefix(message, "s|6") {
-		obm.Add(data)
+	if len(message) >= 3 {
+		code := message[:3]
+		if code == "s|6" {
+			obm.Add(data)
+		}
 	}
 }
 
