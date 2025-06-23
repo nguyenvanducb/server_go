@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	MongoDBURI      = "mongodb://localhost:27017"
+	MongoDBURI      = "mongodb://admin:abc123@localhost:27017/admin"
 	DBName          = "moneyflow"
 	Collection      = "stock_code"
 	CollectionOrder = "orders"
