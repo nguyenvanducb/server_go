@@ -66,8 +66,8 @@ func startWebSocketServer() {
 
 	go handleMessages()
 
-	log.Println("🟢 WebSocket server đang chạy tại ws://localhost:90/ws")
-	if err := http.ListenAndServe(":90", nil); err != nil {
+	log.Println("🟢 WebSocket server đang chạy tại ws://localhost:80/ws")
+	if err := http.ListenAndServe(":80", nil); err != nil {
 		log.Fatal("❌ Lỗi khi chạy WebSocket server:", err)
 	}
 }
