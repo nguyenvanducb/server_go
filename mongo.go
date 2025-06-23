@@ -52,7 +52,13 @@ func (bm *BatchManager) Add(data map[string]interface{}) {
 	bm.mutex.Lock()
 	defer bm.mutex.Unlock()
 
-	bm.data = append(bm.data, data)
+	// ✅ Tạo bản copy để tránh reference đến mapStock gốc
+	copyData := make(map[string]interface{})
+	for k, v := range data {
+		copyData[k] = v
+	}
+
+	bm.data = append(bm.data, copyData)
 	if len(bm.data) >= BatchSize {
 		bm.save()
 	}
@@ -83,7 +89,7 @@ func (bm *BatchManager) save() {
 	if len(writes) > 0 {
 		_, err := bm.coll.BulkWrite(context.TODO(), writes)
 		if err != nil {
-			log.Println("❌ Lỗi cập nhật batch:", err)
+			log.Println("❌ Lỗi cập nhật batch stock:", err)
 		} else {
 			log.Printf("✅ Đã cập nhật %d bản ghi stock\n", len(temp))
 		}
@@ -103,6 +109,7 @@ func (obm *OrderBatchManager) Add(data map[string]interface{}) {
 	obm.mutex.Lock()
 	defer obm.mutex.Unlock()
 
+	// ✅ Data đã được copy ở wsclient.go rồi, không cần copy lại
 	obm.data = append(obm.data, data)
 	if len(obm.data) >= 1 { // Chèn từng bản ghi luôn
 		obm.save()
