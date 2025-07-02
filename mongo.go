@@ -17,15 +17,19 @@ const (
 	DBName          = "moneyflow"
 	Collection      = "stock_code"
 	CollectionOrder = "orders"
-	BatchSize       = 2
+	BatchSize       = 500                    // ✅ Max batch size - chỉ để tránh memory overflow
+	FlushInterval   = 200 * time.Millisecond // ✅ Balanced: responsive + efficient I/O
 )
 
-// Kết nối đến MongoDB
+// ✅ Optimized connection với connection pooling
 func connectMongoDB() *mongo.Client {
 	opt := options.Client().
 		ApplyURI(MongoDBURI).
 		SetServerSelectionTimeout(10 * time.Second).
-		SetSocketTimeout(30 * time.Second)
+		SetSocketTimeout(30 * time.Second).
+		SetMaxPoolSize(100). // ✅ Tăng connection pool
+		SetMinPoolSize(10).  // ✅ Maintain minimum connections
+		SetMaxConnIdleTime(30 * time.Second)
 
 	client, err := mongo.Connect(context.TODO(), opt)
 	if err != nil {
@@ -40,47 +44,92 @@ func connectMongoDB() *mongo.Client {
 	return client
 }
 
-// ---------------------------
-// Quản lý lưu batch stock code
-// ---------------------------
-type BatchManager struct {
-	mutex sync.Mutex
-	data  []interface{}
-	coll  *mongo.Collection
+// ✅ Optimized BatchManager với channel-based processing
+type OptimizedBatchManager struct {
+	dataChan chan map[string]interface{}
+	coll     *mongo.Collection
+	wg       sync.WaitGroup
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
-func NewBatchManager(coll *mongo.Collection) *BatchManager {
-	return &BatchManager{
-		data: make([]interface{}, 0),
-		coll: coll,
+func NewOptimizedBatchManager(coll *mongo.Collection) *OptimizedBatchManager {
+	ctx, cancel := context.WithCancel(context.Background())
+	bm := &OptimizedBatchManager{
+		dataChan: make(chan map[string]interface{}, 1000), // ✅ Buffered channel
+		coll:     coll,
+		ctx:      ctx,
+		cancel:   cancel,
+	}
+
+	// ✅ Start background goroutine for batch processing
+	bm.wg.Add(1)
+	go bm.processBatches()
+
+	return bm
+}
+
+func (bm *OptimizedBatchManager) Add(data map[string]interface{}) {
+	// ✅ Non-blocking send với select
+	select {
+	case bm.dataChan <- data:
+		// Successfully added to channel
+	default:
+		// Channel full, log warning but don't block
+		log.Println("⚠️ Batch channel full, dropping data")
 	}
 }
 
-func (bm *BatchManager) Add(data map[string]interface{}) {
-	bm.mutex.Lock()
-	defer bm.mutex.Unlock()
+func (bm *OptimizedBatchManager) processBatches() {
+	defer bm.wg.Done()
 
-	// ✅ Tạo bản copy để tránh reference đến mapStock gốc
-	copyData := make(map[string]interface{})
-	for k, v := range data {
-		copyData[k] = v
-	}
+	batch := make([]interface{}, 0, BatchSize)
+	ticker := time.NewTicker(FlushInterval)
+	defer ticker.Stop()
 
-	bm.data = append(bm.data, copyData)
-	if len(bm.data) >= BatchSize {
-		bm.save()
+	for {
+		select {
+		case data := <-bm.dataChan:
+			// ✅ Copy data để tránh reference issues
+			copyData := make(map[string]interface{})
+			for k, v := range data {
+				copyData[k] = v
+			}
+			batch = append(batch, copyData)
+
+			// ✅ Flush ngay khi có data đầu tiên và đã qua FlushInterval
+			// Hoặc khi đạt BatchSize (để tránh memory overflow)
+			if len(batch) >= BatchSize {
+				bm.flushBatch(batch)
+				batch = make([]interface{}, 0, BatchSize)
+				ticker.Reset(FlushInterval) // ✅ Reset timer
+			}
+
+		case <-ticker.C:
+			// ✅ Flush định kỳ - đây là trigger chính
+			if len(batch) > 0 {
+				bm.flushBatch(batch)
+				batch = make([]interface{}, 0, BatchSize)
+			}
+
+		case <-bm.ctx.Done():
+			// ✅ Flush remaining data before shutdown
+			if len(batch) > 0 {
+				bm.flushBatch(batch)
+			}
+			return
+		}
 	}
 }
 
-func (bm *BatchManager) save() {
-	if len(bm.data) == 0 {
+func (bm *OptimizedBatchManager) flushBatch(batch []interface{}) {
+	if len(batch) == 0 {
 		return
 	}
-	temp := bm.data
-	bm.data = make([]interface{}, 0) // ✅ Initialize properly
 
-	var writes []mongo.WriteModel
-	for _, d := range temp {
+	// ✅ Prepare bulk operations
+	writes := make([]mongo.WriteModel, 0, len(batch))
+	for _, d := range batch {
 		doc, ok := d.(map[string]interface{})
 		if !ok {
 			continue
@@ -89,46 +138,67 @@ func (bm *BatchManager) save() {
 		if !ok {
 			continue
 		}
+
 		filter := bson.M{"symbol": symbol}
 		update := bson.M{"$set": doc}
-		writes = append(writes, mongo.NewUpdateOneModel().SetFilter(filter).SetUpdate(update).SetUpsert(true))
+		writes = append(writes, mongo.NewUpdateOneModel().
+			SetFilter(filter).
+			SetUpdate(update).
+			SetUpsert(true))
 	}
 
 	if len(writes) > 0 {
-		_, err := bm.coll.BulkWrite(context.TODO(), writes)
+		// ✅ Bulk write với options tối ưu
+		opts := options.BulkWrite().
+			SetOrdered(false). // ✅ Unordered for better performance
+			SetBypassDocumentValidation(true)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, err := bm.coll.BulkWrite(ctx, writes, opts)
 		if err != nil {
-			log.Println("❌ Lỗi cập nhật batch stock:", err)
+			log.Printf("❌ Lỗi bulk write stock: %v", err)
 		} else {
-			log.Printf("✅ Đã cập nhật %d bản ghi stock\n", len(temp))
+			log.Printf("✅ Bulk write thành công %d records", len(writes))
 		}
 	}
 }
 
-// ---------------------------
-// Quản lý insert orders
-// ---------------------------
-type OrderBatchManager struct {
-	mutex         sync.Mutex
-	data          []interface{}
+func (bm *OptimizedBatchManager) Close() {
+	close(bm.dataChan)
+	bm.cancel()
+	bm.wg.Wait()
+}
+
+// ✅ Optimized OrderBatchManager
+type OptimizedOrderBatchManager struct {
+	dataChan      chan map[string]interface{}
 	coll          *mongo.Collection
-	bufferedBest  map[string]map[string]interface{}
-	bufferFlushed bool // ✅ để tránh flush nhiều lần
+	bufferedBest  sync.Map // ✅ Concurrent map thay vì mutex
+	bufferFlushed bool
+	mutex         sync.RWMutex
+	wg            sync.WaitGroup
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
-// ✅ Constructor function to properly initialize the OrderBatchManager
-func NewOrderBatchManager(coll *mongo.Collection) *OrderBatchManager {
-	return &OrderBatchManager{
-		data:          make([]interface{}, 0),
-		coll:          coll,
-		bufferedBest:  make(map[string]map[string]interface{}), // ✅ Initialize the map!
-		bufferFlushed: false,
+func NewOptimizedOrderBatchManager(coll *mongo.Collection) *OptimizedOrderBatchManager {
+	ctx, cancel := context.WithCancel(context.Background())
+	obm := &OptimizedOrderBatchManager{
+		dataChan: make(chan map[string]interface{}, 1000),
+		coll:     coll,
+		ctx:      ctx,
+		cancel:   cancel,
 	}
+
+	obm.wg.Add(1)
+	go obm.processBatches()
+
+	return obm
 }
 
-func (obm *OrderBatchManager) Add(data map[string]interface{}) {
-	obm.mutex.Lock()
-	defer obm.mutex.Unlock()
-
+func (obm *OptimizedOrderBatchManager) Add(data map[string]interface{}) {
 	vnLoc, _ := time.LoadLocation("Asia/Ho_Chi_Minh")
 	now := time.Now().In(vnLoc)
 
@@ -138,91 +208,127 @@ func (obm *OrderBatchManager) Add(data map[string]interface{}) {
 	symbol, _ := data["symbol"].(string)
 	matchQtty := parseInt(data["matchQtty"])
 
-	// ⏳ Trong khoảng 14:30–14:46: lưu tạm vào bộ nhớ
+	// ✅ Buffer logic với concurrent map
 	if now.After(cutoffStart) && now.Before(cutoffEnd) {
-		old, exists := obm.bufferedBest[symbol]
-		if !exists || matchQtty > parseInt(old["matchQtty"]) {
-			// ✅ Create a copy of the data to avoid reference issues
+		copyData := make(map[string]interface{})
+		for k, v := range data {
+			copyData[k] = v
+		}
+
+		// ✅ Thread-safe update using sync.Map
+		if oldVal, exists := obm.bufferedBest.Load(symbol); exists {
+			if old, ok := oldVal.(map[string]interface{}); ok {
+				if matchQtty > parseInt(old["matchQtty"]) {
+					obm.bufferedBest.Store(symbol, copyData)
+				}
+			}
+		} else {
+			obm.bufferedBest.Store(symbol, copyData)
+		}
+		return
+	}
+
+	// ✅ Flush buffer sau 14:46
+	obm.mutex.Lock()
+	if now.After(cutoffEnd) && !obm.bufferFlushed {
+		go obm.flushBuffered() // ✅ Async flush
+		obm.bufferFlushed = true
+	}
+	obm.mutex.Unlock()
+
+	// ✅ Send to channel
+	select {
+	case obm.dataChan <- data:
+	default:
+		log.Println("⚠️ Order channel full, dropping data")
+	}
+}
+
+func (obm *OptimizedOrderBatchManager) processBatches() {
+	defer obm.wg.Done()
+
+	batch := make([]interface{}, 0, BatchSize)
+	ticker := time.NewTicker(FlushInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case data := <-obm.dataChan:
 			copyData := make(map[string]interface{})
 			for k, v := range data {
 				copyData[k] = v
 			}
-			obm.bufferedBest[symbol] = copyData
-			log.Printf("🔄 [BUFFER] Cập nhật order tốt nhất cho %s (matchQtty: %d)", symbol, matchQtty)
-		} else {
-			log.Printf("➖ [BUFFER] Bỏ qua order thấp hơn cho %s", symbol)
+			batch = append(batch, copyData)
+
+			// ✅ Flush ngay khi đạt BatchSize (safety limit)
+			if len(batch) >= BatchSize {
+				obm.flushBatch(batch)
+				batch = make([]interface{}, 0, BatchSize)
+				ticker.Reset(FlushInterval) // ✅ Reset timer
+			}
+
+		case <-ticker.C:
+			// ✅ Flush định kỳ - trigger chính cho low-latency
+			if len(batch) > 0 {
+				obm.flushBatch(batch)
+				batch = make([]interface{}, 0, BatchSize)
+			}
+
+		case <-obm.ctx.Done():
+			if len(batch) > 0 {
+				obm.flushBatch(batch)
+			}
+			return
 		}
-		return
-	}
-
-	// ✅ Sau 14:46: flush 1 lần nếu chưa flush
-	if now.After(cutoffEnd) && !obm.bufferFlushed {
-		obm.flushBuffered()
-		obm.bufferFlushed = true
-	}
-
-	// ✅ Create a copy of the data before adding
-	copyData := make(map[string]interface{})
-	for k, v := range data {
-		copyData[k] = v
-	}
-
-	// ✅ Thêm bản mới sau khi đã flush
-	obm.data = append(obm.data, copyData)
-	if len(obm.data) >= 1 {
-		obm.save()
 	}
 }
 
-func (obm *OrderBatchManager) flushBuffered() {
-	if len(obm.bufferedBest) == 0 {
-		log.Println("ℹ️ Không có gì để flush từ buffer.")
+func (obm *OptimizedOrderBatchManager) flushBatch(batch []interface{}) {
+	if len(batch) == 0 {
 		return
 	}
 
-	log.Printf("🚀 Flush %d bản ghi từ buffer vào MongoDB", len(obm.bufferedBest))
-	var temp []interface{}
-	for _, doc := range obm.bufferedBest {
-		temp = append(temp, doc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	opts := options.InsertMany().SetOrdered(false) // ✅ Unordered insert
+	_, err := obm.coll.InsertMany(ctx, batch, opts)
+	if err != nil {
+		log.Printf("❌ Lỗi insert orders: %v", err)
+	} else {
+		log.Printf("📥 Insert thành công %d orders", len(batch))
 	}
-	obm.bufferedBest = make(map[string]map[string]interface{}) // reset
+}
+
+func (obm *OptimizedOrderBatchManager) flushBuffered() {
+	var temp []interface{}
+
+	// ✅ Collect all buffered data
+	obm.bufferedBest.Range(func(key, value interface{}) bool {
+		temp = append(temp, value)
+		return true
+	})
 
 	if len(temp) > 0 {
-		_, err := obm.coll.InsertMany(context.TODO(), temp)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, err := obm.coll.InsertMany(ctx, temp)
 		if err != nil {
-			log.Println("❌ Lỗi khi flush buffer:", err)
+			log.Printf("❌ Lỗi flush buffer: %v", err)
 		} else {
-			log.Printf("✅ Đã insert %d bản ghi từ buffer", len(temp))
+			log.Printf("🚀 Flush thành công %d records từ buffer", len(temp))
 		}
 	}
+
+	// ✅ Clear buffer
+	obm.bufferedBest = sync.Map{}
 }
 
-func (obm *OrderBatchManager) save() {
-	if len(obm.data) == 0 {
-		return
-	}
-	temp := obm.data
-	obm.data = make([]interface{}, 0) // ✅ Initialize properly
-
-	_, err := obm.coll.InsertMany(context.TODO(), temp)
-	if err != nil {
-		log.Println("❌ Lỗi insert order:", err)
-	} else {
-		log.Printf("📥 Đã insert %d bản ghi order\n", len(temp))
-	}
-}
-
-// ✅ Add method to safely flush remaining data when shutting down
-func (obm *OrderBatchManager) Flush() {
-	obm.mutex.Lock()
-	defer obm.mutex.Unlock()
-
-	// Flush buffered data first
-	if !obm.bufferFlushed {
-		obm.flushBuffered()
-	}
-	// Then flush remaining data
-	obm.save()
+func (obm *OptimizedOrderBatchManager) Close() {
+	close(obm.dataChan)
+	obm.cancel()
+	obm.wg.Wait()
 }
 
 func parseInt(val interface{}) int64 {

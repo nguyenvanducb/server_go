@@ -33,42 +33,81 @@ func startWebSocket(symbols []string, token string, db *mongo.Database) {
 
 		log.Println("✅ Đã kết nối WebSocket TCBS")
 
-		bm := &BatchManager{coll: db.Collection(Collection)}
-		obm := &OrderBatchManager{coll: db.Collection(CollectionOrder)}
+		// ✅ Sử dụng optimized batch managers
+		bm := NewOptimizedBatchManager(db.Collection(Collection))
+		obm := NewOptimizedOrderBatchManager(db.Collection(CollectionOrder))
+
+		// ✅ Cleanup khi đóng connection
+		defer func() {
+			log.Println("🔄 Đang cleanup batch managers...")
+			bm.Close()
+			obm.Close()
+			log.Println("✅ Cleanup hoàn tất")
+		}()
 
 		// Gửi thông tin xác thực
 		base64Token := base64.StdEncoding.EncodeToString([]byte(token))
 		authMsg := fmt.Sprintf("d|a|||%s", base64Token)
-		conn.WriteMessage(websocket.TextMessage, []byte(authMsg))
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(authMsg)); err != nil {
+			log.Printf("❌ Lỗi gửi auth message: %v", err)
+			conn.Close()
+			continue
+		}
 
 		// Gửi yêu cầu subscribe mã cổ phiếu
 		subMsg := fmt.Sprintf("d|s|tk|bp+bi+tm+op+fe|%s", strings.Join(symbols, ","))
-		conn.WriteMessage(websocket.TextMessage, []byte(subMsg))
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(subMsg)); err != nil {
+			log.Printf("❌ Lỗi gửi subscribe message: %v", err)
+			conn.Close()
+			continue
+		}
 
-		// Gửi ping mỗi 10s
+		// ✅ Goroutine để gửi ping định kỳ
+		pingDone := make(chan struct{})
 		go func() {
+			defer close(pingDone)
 			ticker := time.NewTicker(10 * time.Second)
 			defer ticker.Stop()
-			for range ticker.C {
-				conn.WriteMessage(websocket.TextMessage, []byte("d|p|||"))
+
+			for {
+				select {
+				case <-ticker.C:
+					if err := conn.WriteMessage(websocket.TextMessage, []byte("d|p|||")); err != nil {
+						log.Printf("❌ Lỗi gửi ping: %v", err)
+						return
+					}
+				case <-pingDone:
+					return
+				}
 			}
 		}()
 
-		// Đọc dữ liệu liên tục
-		for {
+		// ✅ Đọc dữ liệu liên tục với error handling
+		connectionBroken := false
+		for !connectionBroken {
 			_, msg, err := conn.ReadMessage()
 			if err != nil {
 				log.Printf("⚠️ Mất kết nối WebSocket TCBS: %v", err)
-				conn.Close()
+				connectionBroken = true
 				break
 			}
-			handleTCBSMessage(string(msg), bm, obm)
+
+			// ✅ Xử lý message trong goroutine riêng để không block read loop
+			go handleTCBSMessage(string(msg), bm, obm)
 		}
+
+		// ✅ Cleanup khi connection bị đứt
+		close(pingDone)
+		conn.Close()
+
+		// ✅ Đợi một chút trước khi reconnect
+		log.Println("🔄 Sẽ thử kết nối lại sau 3 giây...")
+		time.Sleep(3 * time.Second)
 	}
 }
 
-// ✅ Xử lý dữ liệu với logic mapStock như code cũ
-func handleTCBSMessage(message string, bm *BatchManager, obm *OrderBatchManager) {
+// ✅ Xử lý dữ liệu với optimized managers
+func handleTCBSMessage(message string, bm *OptimizedBatchManager, obm *OptimizedOrderBatchManager) {
 	if strings.HasPrefix(message, "d|0|") {
 		// Tin nhắn xác thực hoặc không chứa dữ liệu
 		return
@@ -90,22 +129,28 @@ func handleTCBSMessage(message string, bm *BatchManager, obm *OrderBatchManager)
 
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
-		log.Println("❌ Lỗi parse JSON:", err)
+		log.Printf("❌ Lỗi parse JSON: %v", err)
 		return
 	}
 
 	// Thêm timestamp
 	data["time"] = time.Now()
 
-	// ✅ Áp dụng logic mapData như code cũ
+	// ✅ Áp dụng logic mapData với optimized managers
 	mapData(code, data, bm, obm)
 
-	// Gửi tới client đang kết nối qua WebSocket server (port 8888)
-	broadcast <- []byte(jsonStr)
+	// ✅ Gửi tới client đang kết nối qua WebSocket server (port 8888)
+	select {
+	case broadcast <- []byte(jsonStr):
+		// Successfully sent to broadcast channel
+	default:
+		// Broadcast channel full, skip this message to avoid blocking
+		log.Println("⚠️ Broadcast channel full, skipping message")
+	}
 }
 
-// ✅ Hàm mapData - tích lũy dữ liệu theo symbol như code cũ
-func mapData(code string, jsonData map[string]interface{}, bm *BatchManager, obm *OrderBatchManager) {
+// ✅ Hàm mapData với optimized managers
+func mapData(code string, jsonData map[string]interface{}, bm *OptimizedBatchManager, obm *OptimizedOrderBatchManager) {
 	symbolRaw, exists := jsonData["symbol"]
 	if !exists {
 		log.Println("❌ Không có trường 'symbol'")
@@ -119,6 +164,8 @@ func mapData(code string, jsonData map[string]interface{}, bm *BatchManager, obm
 	}
 
 	mapStockMux.Lock()
+	defer mapStockMux.Unlock() // ✅ Sử dụng defer để đảm bảo unlock
+
 	// ✅ Cập nhật mapStock - tích lũy dữ liệu
 	if _, found := mapStock[symbol]; !found {
 		// Tạo mới nếu chưa có symbol
@@ -133,18 +180,38 @@ func mapData(code string, jsonData map[string]interface{}, bm *BatchManager, obm
 		}
 	}
 
-	// ✅ Lưu vào stock_code collection (tất cả message)
-	bm.Add(mapStock[symbol])
+	// ✅ Tạo bản copy để gửi đến batch managers (tránh race condition)
+	stockData := make(map[string]interface{})
+	for k, v := range mapStock[symbol] {
+		stockData[k] = v
+	}
+
+	// ✅ Lưu vào stock_code collection (tất cả message) - non-blocking
+	bm.Add(stockData)
 
 	// ✅ CHỈ KHI code là "s|6" mới lưu vào orders collection
 	if code == "s|6" {
-		// Tạo bản copy để tránh race condition
+		// Tạo bản copy riêng cho order data
 		orderData := make(map[string]interface{})
-		for k, v := range mapStock[symbol] {
+		for k, v := range stockData {
 			orderData[k] = v
 		}
 		obm.Add(orderData)
 		log.Printf("📥 Đưa vào batch Order cho symbol: %s", symbol)
 	}
-	mapStockMux.Unlock()
+}
+
+// ✅ Graceful shutdown function (optional - để cleanup khi app shutdown)
+func gracefulShutdown(bm *OptimizedBatchManager, obm *OptimizedOrderBatchManager) {
+	log.Println("🛑 Graceful shutdown initiated...")
+
+	// Wait for all pending operations to complete
+	if bm != nil {
+		bm.Close()
+	}
+	if obm != nil {
+		obm.Close()
+	}
+
+	log.Println("✅ Graceful shutdown completed")
 }
