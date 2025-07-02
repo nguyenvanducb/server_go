@@ -49,6 +49,13 @@ type BatchManager struct {
 	coll  *mongo.Collection
 }
 
+func NewBatchManager(coll *mongo.Collection) *BatchManager {
+	return &BatchManager{
+		data: make([]interface{}, 0),
+		coll: coll,
+	}
+}
+
 func (bm *BatchManager) Add(data map[string]interface{}) {
 	bm.mutex.Lock()
 	defer bm.mutex.Unlock()
@@ -70,7 +77,7 @@ func (bm *BatchManager) save() {
 		return
 	}
 	temp := bm.data
-	bm.data = nil
+	bm.data = make([]interface{}, 0) // ✅ Initialize properly
 
 	var writes []mongo.WriteModel
 	for _, d := range temp {
@@ -108,6 +115,16 @@ type OrderBatchManager struct {
 	bufferFlushed bool // ✅ để tránh flush nhiều lần
 }
 
+// ✅ Constructor function to properly initialize the OrderBatchManager
+func NewOrderBatchManager(coll *mongo.Collection) *OrderBatchManager {
+	return &OrderBatchManager{
+		data:          make([]interface{}, 0),
+		coll:          coll,
+		bufferedBest:  make(map[string]map[string]interface{}), // ✅ Initialize the map!
+		bufferFlushed: false,
+	}
+}
+
 func (obm *OrderBatchManager) Add(data map[string]interface{}) {
 	obm.mutex.Lock()
 	defer obm.mutex.Unlock()
@@ -125,7 +142,12 @@ func (obm *OrderBatchManager) Add(data map[string]interface{}) {
 	if now.After(cutoffStart) && now.Before(cutoffEnd) {
 		old, exists := obm.bufferedBest[symbol]
 		if !exists || matchQtty > parseInt(old["matchQtty"]) {
-			obm.bufferedBest[symbol] = data
+			// ✅ Create a copy of the data to avoid reference issues
+			copyData := make(map[string]interface{})
+			for k, v := range data {
+				copyData[k] = v
+			}
+			obm.bufferedBest[symbol] = copyData
 			log.Printf("🔄 [BUFFER] Cập nhật order tốt nhất cho %s (matchQtty: %d)", symbol, matchQtty)
 		} else {
 			log.Printf("➖ [BUFFER] Bỏ qua order thấp hơn cho %s", symbol)
@@ -139,8 +161,14 @@ func (obm *OrderBatchManager) Add(data map[string]interface{}) {
 		obm.bufferFlushed = true
 	}
 
+	// ✅ Create a copy of the data before adding
+	copyData := make(map[string]interface{})
+	for k, v := range data {
+		copyData[k] = v
+	}
+
 	// ✅ Thêm bản mới sau khi đã flush
-	obm.data = append(obm.data, data)
+	obm.data = append(obm.data, copyData)
 	if len(obm.data) >= 1 {
 		obm.save()
 	}
@@ -159,11 +187,13 @@ func (obm *OrderBatchManager) flushBuffered() {
 	}
 	obm.bufferedBest = make(map[string]map[string]interface{}) // reset
 
-	_, err := obm.coll.InsertMany(context.TODO(), temp)
-	if err != nil {
-		log.Println("❌ Lỗi khi flush buffer:", err)
-	} else {
-		log.Printf("✅ Đã insert %d bản ghi từ buffer", len(temp))
+	if len(temp) > 0 {
+		_, err := obm.coll.InsertMany(context.TODO(), temp)
+		if err != nil {
+			log.Println("❌ Lỗi khi flush buffer:", err)
+		} else {
+			log.Printf("✅ Đã insert %d bản ghi từ buffer", len(temp))
+		}
 	}
 }
 
@@ -172,7 +202,7 @@ func (obm *OrderBatchManager) save() {
 		return
 	}
 	temp := obm.data
-	obm.data = nil
+	obm.data = make([]interface{}, 0) // ✅ Initialize properly
 
 	_, err := obm.coll.InsertMany(context.TODO(), temp)
 	if err != nil {
@@ -181,6 +211,20 @@ func (obm *OrderBatchManager) save() {
 		log.Printf("📥 Đã insert %d bản ghi order\n", len(temp))
 	}
 }
+
+// ✅ Add method to safely flush remaining data when shutting down
+func (obm *OrderBatchManager) Flush() {
+	obm.mutex.Lock()
+	defer obm.mutex.Unlock()
+
+	// Flush buffered data first
+	if !obm.bufferFlushed {
+		obm.flushBuffered()
+	}
+	// Then flush remaining data
+	obm.save()
+}
+
 func parseInt(val interface{}) int64 {
 	switch v := val.(type) {
 	case string:
