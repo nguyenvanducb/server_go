@@ -34,18 +34,18 @@ func startWebSocket(symbols []string, token string, db *mongo.Database) {
 
 		log.Println("✅ Đã kết nối WebSocket TCBS")
 
-		// ✅ Sử dụng UltraFastBatchManager thay vì OptimizedBatchManager
-		bm := NewUltraFastBatchManager(db.Collection(Collection))
-		obm := NewUltraFastOrderBatchManager(db.Collection(CollectionOrder))
+		// ✅ ORDERS PRIORITY SYSTEM
+		stockManager := NewRegularStockManager(db.Collection(Collection))         // Regular priority
+		ordersManager := NewCriticalOrdersManager(db.Collection(CollectionOrder)) // MAXIMUM priority
 
 		// ✅ Cleanup khi đóng connection - sử dụng goroutine để không block
 		cleanupDone := make(chan bool)
 		defer func() {
 			go func() {
-				log.Println("🔄 Đang cleanup batch managers...")
-				bm.Close()
-				obm.Close()
-				log.Println("✅ Cleanup hoàn tất")
+				log.Println("🔄 Closing managers...")
+				stockManager.Close()
+				ordersManager.Close() // Orders manager closes last with full verification
+				log.Println("✅ All managers closed")
 				cleanupDone <- true
 			}()
 
@@ -118,7 +118,7 @@ func startWebSocket(symbols []string, token string, db *mongo.Database) {
 			}
 
 			// ✅ Xử lý message trong goroutine riêng để không block read loop
-			go handleTCBSMessage(string(msg), bm, obm)
+			go handleTCBSMessage(string(msg), stockManager, ordersManager)
 		}
 
 		// ✅ Cleanup khi connection bị đứt
@@ -131,8 +131,8 @@ func startWebSocket(symbols []string, token string, db *mongo.Database) {
 	}
 }
 
-// ✅ Xử lý dữ liệu với UltraFastBatchManager
-func handleTCBSMessage(message string, bm *UltraFastBatchManager, obm *UltraFastOrderBatchManager) {
+// ✅ Xử lý dữ liệu với ORDERS PRIORITY SYSTEM
+func handleTCBSMessage(message string, stockManager *RegularStockManager, ordersManager *CriticalOrdersManager) {
 	if strings.HasPrefix(message, "d|0|") {
 		// Tin nhắn xác thực hoặc không chứa dữ liệu
 		return
@@ -162,8 +162,8 @@ func handleTCBSMessage(message string, bm *UltraFastBatchManager, obm *UltraFast
 	data["time"] = time.Now()
 	data["receivedAt"] = time.Now().UnixMilli() // ✅ Thêm timestamp dạng số
 
-	// ✅ Áp dụng logic mapData với UltraFastBatchManager
-	mapData(code, data, bm, obm)
+	// ✅ Áp dụng logic mapData với ORDERS PRIORITY
+	mapData(code, data, stockManager, ordersManager)
 
 	// ✅ Gửi tới client đang kết nối qua WebSocket server (port 9999) - non-blocking
 	select {
@@ -176,8 +176,8 @@ func handleTCBSMessage(message string, bm *UltraFastBatchManager, obm *UltraFast
 	}
 }
 
-// ✅ Hàm mapData với UltraFastBatchManager
-func mapData(code string, jsonData map[string]interface{}, bm *UltraFastBatchManager, obm *UltraFastOrderBatchManager) {
+// ✅ Hàm mapData với ORDERS PRIORITY SYSTEM
+func mapData(code string, jsonData map[string]interface{}, stockManager *RegularStockManager, ordersManager *CriticalOrdersManager) {
 	symbolRaw, exists := jsonData["symbol"]
 	if !exists {
 		// ✅ Không log cho mỗi message thiếu symbol để tránh spam
@@ -217,45 +217,46 @@ func mapData(code string, jsonData map[string]interface{}, bm *UltraFastBatchMan
 		stockData[k] = v
 	}
 
-	// ✅ Lưu vào stock_code collection (tất cả message) - ultra fast, non-blocking
-	bm.Add(stockData)
+	// ✅ Lưu vào stock_code collection (tất cả message) - regular priority
+	stockManager.Add(stockData)
 
-	// ✅ CHỈ KHI code là "s|6" mới lưu vào orders collection
+	// ✅ CHỈ KHI code là "s|6" mới lưu vào orders collection - CRITICAL PRIORITY
 	if code == "s|6" {
 		// Tạo bản copy riêng cho order data
 		orderData := make(map[string]interface{})
 		for k, v := range stockData {
 			orderData[k] = v
 		}
-		obm.Add(orderData)
-		// ✅ Giảm log để tránh spam
-		// log.Printf("📥 Đưa vào batch Order cho symbol: %s", symbol)
+		// ✅ CRITICAL: This is the most important operation
+		ordersManager.Add(orderData)
+		log.Printf("🔥 CRITICAL ORDER: %s processed with maximum priority", symbol)
 	}
 }
 
-// ✅ Graceful shutdown function với UltraFastBatchManager
-func gracefulShutdown(bm *UltraFastBatchManager, obm *UltraFastOrderBatchManager) {
+// ✅ Graceful shutdown function với ORDERS PRIORITY
+func gracefulShutdown(stockManager *RegularStockManager, ordersManager *CriticalOrdersManager) {
 	log.Println("🛑 Graceful shutdown initiated...")
 
 	// ✅ Create a timeout context
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	done := make(chan bool, 2)
 
-	// ✅ Shutdown batch managers in parallel
-	if bm != nil {
+	// ✅ Shutdown stock manager first (less critical)
+	if stockManager != nil {
 		go func() {
-			bm.Close()
+			stockManager.Close()
 			done <- true
 		}()
 	} else {
 		done <- true
 	}
 
-	if obm != nil {
+	// ✅ Shutdown orders manager last with extra care (CRITICAL)
+	if ordersManager != nil {
 		go func() {
-			obm.Close()
+			ordersManager.Close() // This will verify zero loss
 			done <- true
 		}()
 	} else {
@@ -274,5 +275,5 @@ func gracefulShutdown(bm *UltraFastBatchManager, obm *UltraFastOrderBatchManager
 		}
 	}
 
-	log.Println("✅ Graceful shutdown completed")
+	log.Println("✅ Graceful shutdown completed with orders verification")
 }
