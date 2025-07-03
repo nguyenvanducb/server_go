@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -33,16 +34,28 @@ func startWebSocket(symbols []string, token string, db *mongo.Database) {
 
 		log.Println("✅ Đã kết nối WebSocket TCBS")
 
-		// ✅ Sử dụng optimized batch managers
-		bm := NewOptimizedBatchManager(db.Collection(Collection))
-		obm := NewOptimizedOrderBatchManager(db.Collection(CollectionOrder))
+		// ✅ Sử dụng UltraFastBatchManager thay vì OptimizedBatchManager
+		bm := NewUltraFastBatchManager(db.Collection(Collection))
+		obm := NewUltraFastOrderBatchManager(db.Collection(CollectionOrder))
 
-		// ✅ Cleanup khi đóng connection
+		// ✅ Cleanup khi đóng connection - sử dụng goroutine để không block
+		cleanupDone := make(chan bool)
 		defer func() {
-			log.Println("🔄 Đang cleanup batch managers...")
-			bm.Close()
-			obm.Close()
-			log.Println("✅ Cleanup hoàn tất")
+			go func() {
+				log.Println("🔄 Đang cleanup batch managers...")
+				bm.Close()
+				obm.Close()
+				log.Println("✅ Cleanup hoàn tất")
+				cleanupDone <- true
+			}()
+
+			// ✅ Đợi cleanup hoàn tất với timeout
+			select {
+			case <-cleanupDone:
+				// Cleanup completed
+			case <-time.After(5 * time.Second):
+				log.Println("⚠️ Cleanup timeout")
+			}
 		}()
 
 		// Gửi thông tin xác thực
@@ -84,12 +97,24 @@ func startWebSocket(symbols []string, token string, db *mongo.Database) {
 
 		// ✅ Đọc dữ liệu liên tục với error handling
 		connectionBroken := false
+		messageCount := 0
+		startTime := time.Now()
+
 		for !connectionBroken {
 			_, msg, err := conn.ReadMessage()
 			if err != nil {
 				log.Printf("⚠️ Mất kết nối WebSocket TCBS: %v", err)
 				connectionBroken = true
 				break
+			}
+
+			messageCount++
+
+			// ✅ Log stats mỗi 1000 messages
+			if messageCount%1000 == 0 {
+				duration := time.Since(startTime)
+				rate := float64(messageCount) / duration.Seconds()
+				log.Printf("📊 WebSocket Stats: %d messages in %v (%.2f msgs/sec)", messageCount, duration, rate)
 			}
 
 			// ✅ Xử lý message trong goroutine riêng để không block read loop
@@ -106,8 +131,8 @@ func startWebSocket(symbols []string, token string, db *mongo.Database) {
 	}
 }
 
-// ✅ Xử lý dữ liệu với optimized managers
-func handleTCBSMessage(message string, bm *OptimizedBatchManager, obm *OptimizedOrderBatchManager) {
+// ✅ Xử lý dữ liệu với UltraFastBatchManager
+func handleTCBSMessage(message string, bm *UltraFastBatchManager, obm *UltraFastOrderBatchManager) {
 	if strings.HasPrefix(message, "d|0|") {
 		// Tin nhắn xác thực hoặc không chứa dữ liệu
 		return
@@ -133,41 +158,47 @@ func handleTCBSMessage(message string, bm *OptimizedBatchManager, obm *Optimized
 		return
 	}
 
-	// Thêm timestamp
+	// ✅ Thêm timestamp với millisecond precision
 	data["time"] = time.Now()
+	data["receivedAt"] = time.Now().UnixMilli() // ✅ Thêm timestamp dạng số
 
-	// ✅ Áp dụng logic mapData với optimized managers
+	// ✅ Áp dụng logic mapData với UltraFastBatchManager
 	mapData(code, data, bm, obm)
 
-	// ✅ Gửi tới client đang kết nối qua WebSocket server (port 8888)
+	// ✅ Gửi tới client đang kết nối qua WebSocket server (port 9999) - non-blocking
 	select {
 	case broadcast <- []byte(jsonStr):
 		// Successfully sent to broadcast channel
 	default:
 		// Broadcast channel full, skip this message to avoid blocking
-		log.Println("⚠️ Broadcast channel full, skipping message")
+		// ✅ Comment để tránh spam log
+		// log.Println("⚠️ Broadcast channel full, skipping message")
 	}
 }
 
-// ✅ Hàm mapData với optimized managers
-func mapData(code string, jsonData map[string]interface{}, bm *OptimizedBatchManager, obm *OptimizedOrderBatchManager) {
+// ✅ Hàm mapData với UltraFastBatchManager
+func mapData(code string, jsonData map[string]interface{}, bm *UltraFastBatchManager, obm *UltraFastOrderBatchManager) {
 	symbolRaw, exists := jsonData["symbol"]
 	if !exists {
-		log.Println("❌ Không có trường 'symbol'")
+		// ✅ Không log cho mỗi message thiếu symbol để tránh spam
 		return
 	}
 
 	symbol, ok := symbolRaw.(string)
 	if !ok {
-		log.Println("❌ 'symbol' không phải kiểu string")
 		return
 	}
 
+	// ✅ Optimized lock với RLock cho read operations
+	mapStockMux.RLock()
+	_, found := mapStock[symbol]
+	mapStockMux.RUnlock()
+
 	mapStockMux.Lock()
-	defer mapStockMux.Unlock() // ✅ Sử dụng defer để đảm bảo unlock
+	defer mapStockMux.Unlock()
 
 	// ✅ Cập nhật mapStock - tích lũy dữ liệu
-	if _, found := mapStock[symbol]; !found {
+	if !found {
 		// Tạo mới nếu chưa có symbol
 		mapStock[symbol] = make(map[string]interface{})
 		for k, v := range jsonData {
@@ -186,7 +217,7 @@ func mapData(code string, jsonData map[string]interface{}, bm *OptimizedBatchMan
 		stockData[k] = v
 	}
 
-	// ✅ Lưu vào stock_code collection (tất cả message) - non-blocking
+	// ✅ Lưu vào stock_code collection (tất cả message) - ultra fast, non-blocking
 	bm.Add(stockData)
 
 	// ✅ CHỈ KHI code là "s|6" mới lưu vào orders collection
@@ -197,20 +228,50 @@ func mapData(code string, jsonData map[string]interface{}, bm *OptimizedBatchMan
 			orderData[k] = v
 		}
 		obm.Add(orderData)
-		log.Printf("📥 Đưa vào batch Order cho symbol: %s", symbol)
+		// ✅ Giảm log để tránh spam
+		// log.Printf("📥 Đưa vào batch Order cho symbol: %s", symbol)
 	}
 }
 
-// ✅ Graceful shutdown function (optional - để cleanup khi app shutdown)
-func gracefulShutdown(bm *OptimizedBatchManager, obm *OptimizedOrderBatchManager) {
+// ✅ Graceful shutdown function với UltraFastBatchManager
+func gracefulShutdown(bm *UltraFastBatchManager, obm *UltraFastOrderBatchManager) {
 	log.Println("🛑 Graceful shutdown initiated...")
 
-	// Wait for all pending operations to complete
+	// ✅ Create a timeout context
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	done := make(chan bool, 2)
+
+	// ✅ Shutdown batch managers in parallel
 	if bm != nil {
-		bm.Close()
+		go func() {
+			bm.Close()
+			done <- true
+		}()
+	} else {
+		done <- true
 	}
+
 	if obm != nil {
-		obm.Close()
+		go func() {
+			obm.Close()
+			done <- true
+		}()
+	} else {
+		done <- true
+	}
+
+	// ✅ Wait for both to complete or timeout
+	completed := 0
+	for completed < 2 {
+		select {
+		case <-done:
+			completed++
+		case <-ctx.Done():
+			log.Println("⚠️ Graceful shutdown timeout")
+			return
+		}
 	}
 
 	log.Println("✅ Graceful shutdown completed")
