@@ -104,9 +104,7 @@ func (bm *BatchManager) save() {
 	}
 }
 
-// ---------------------------
 // Quản lý insert orders
-// ---------------------------
 type OrderBatchManager struct {
 	mutex         sync.Mutex
 	data          []interface{}
