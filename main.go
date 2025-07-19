@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -19,11 +20,20 @@ func main() {
 	if err != nil {
 		log.Fatal("❌ Lỗi lấy access token:", err)
 	}
-	go CallTickerCommonsAPI(token)
 
 	// ✅ Kết nối MongoDB
 	client := connectMongoDB()
+	defer client.Disconnect(context.TODO())
+
 	db := client.Database(DBName)
+	stockCollection := db.Collection(Collection)
+
+	// ✅ Tạo RegularStockManager cho ticker commons
+	stockManager := NewRegularStockManager(stockCollection)
+	defer stockManager.Close()
+
+	// ✅ Gọi TickerCommons API với stockManager
+	go CallTickerCommonsAPI(token, stockManager)
 
 	// ✅ Bắt đầu WebSocket server để phục vụ client kết nối đến localhost:8888/ws
 	go startWebSocketServer()
