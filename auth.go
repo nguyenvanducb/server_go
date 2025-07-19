@@ -9,12 +9,16 @@ import (
 	"net/http"
 )
 
-// AuthResponse struct để parse dữ liệu trả về từ API
 type AuthResponse struct {
 	Token string `json:"token"`
 }
 
-// GetAccessToken gọi API để lấy token
+type ErrorResponse struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// GetAccessToken gọi API lấy token, fallback sang token lưu nếu mã 203033
 func GetAccessToken(apiKey, otp string) (string, error) {
 	url := "https://openapi.tcbs.com.vn/gaia/v1/oauth2/openapi/token"
 
@@ -34,8 +38,7 @@ func GetAccessToken(apiKey, otp string) (string, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("lỗi gửi request: %v", err)
 	}
@@ -43,17 +46,28 @@ func GetAccessToken(apiKey, otp string) (string, error) {
 
 	body, _ := ioutil.ReadAll(resp.Body)
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("lỗi từ server: %s", body)
+	if resp.StatusCode == http.StatusOK {
+		var result AuthResponse
+		if err := json.Unmarshal(body, &result); err != nil {
+			return "", fmt.Errorf("lỗi giải mã phản hồi: %v", err)
+		}
+		// Lưu token mới vào file
+		if err := SaveTokenToFile(result.Token); err != nil {
+			fmt.Println("⚠️  Không thể lưu token:", err)
+		}
+		return result.Token, nil
 	}
 
-	var result struct {
-		Token string `json:"token"`
-	}
-	err = json.Unmarshal(body, &result)
-	if err != nil {
-		return "", fmt.Errorf("lỗi giải mã phản hồi: %v", err)
+	// Xử lý khi mã lỗi 203033
+	var errResp ErrorResponse
+	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Code == "203033" {
+		token, err := LoadTokenFromFile()
+		if err != nil {
+			return "", fmt.Errorf("OTP sai và không tìm thấy token cũ: %v", err)
+		}
+		fmt.Println("⚠️  OTP sai, dùng lại token đã lưu.")
+		return token, nil
 	}
 
-	return result.Token, nil
+	return "", fmt.Errorf("lỗi từ server: %s", body)
 }

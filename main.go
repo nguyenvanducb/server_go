@@ -19,6 +19,7 @@ func main() {
 	if err != nil {
 		log.Fatal("❌ Lỗi lấy access token:", err)
 	}
+	go CallTickerCommonsAPI(token)
 
 	// ✅ Kết nối MongoDB
 	client := connectMongoDB()
