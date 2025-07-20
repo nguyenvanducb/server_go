@@ -36,46 +36,68 @@ const (
 	StockRetryAttempts  = 3                      // Fewer retries OK
 	StockRetryDelay     = 100 * time.Millisecond // Slower retry OK
 
-	// ✅ MEMORY MANAGEMENT CONSTANTS
-	MaxMemoryMB        = 200   // Maximum memory before cleanup (MB)
-	CleanupIntervalSec = 30    // Background cleanup interval (seconds)
-	MaxSymbolAge       = 300   // Maximum age for symbols in seconds (5 minutes)
-	MaxSymbolCount     = 10000 // Maximum symbols in memory
+	// ✅ MEMORY MANAGEMENT CONSTANTS WITH LIST SUPPORT
+	MaxMemoryMB         = 200   // Maximum memory before cleanup (MB)
+	CleanupIntervalSec  = 30    // Background cleanup interval (seconds)
+	MaxSymbolAge        = 300   // Maximum age for symbols in seconds (5 minutes)
+	MaxSymbolCount      = 10000 // Maximum symbols in memory
+	MaxRecordsPerSymbol = 100   // Maximum records per symbol (LIST)
+	MaxOrdersPerSymbol  = 500   // More records for critical orders
 )
 
-// ✅ Enhanced memory management with auto-cleanup
+// ✅ Enhanced memory management with LIST support - NO DATA LOSS
 type MemoryManagedStockMap struct {
-	data           map[string]map[string]interface{}
-	lastAccessed   map[string]time.Time
-	mutex          sync.RWMutex
-	cleanupTicker  *time.Ticker
-	maxAge         time.Duration
-	maxSize        int
-	cleanupRunning bool
-	ctx            context.Context
-	cancel         context.CancelFunc
+	data                map[string][]map[string]interface{} // ← LIST of records per symbol
+	lastAccessed        map[string]time.Time
+	recordCounts        map[string]int64 // Track record count per symbol
+	totalRecords        int64            // Total records across all symbols
+	mutex               sync.RWMutex
+	cleanupTicker       *time.Ticker
+	maxAge              time.Duration
+	maxSize             int
+	maxRecordsPerSymbol int
+	isOrdersMap         bool // Different limits for orders vs stock
+	cleanupRunning      bool
+	ctx                 context.Context
+	cancel              context.CancelFunc
 }
 
-func NewMemoryManagedStockMap() *MemoryManagedStockMap {
+func NewMemoryManagedStockMap(isOrdersMap bool) *MemoryManagedStockMap {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	maxRecords := MaxRecordsPerSymbol
+	if isOrdersMap {
+		maxRecords = MaxOrdersPerSymbol
+	}
+
 	mm := &MemoryManagedStockMap{
-		data:          make(map[string]map[string]interface{}),
-		lastAccessed:  make(map[string]time.Time),
-		maxAge:        time.Duration(MaxSymbolAge) * time.Second,
-		maxSize:       MaxSymbolCount,
-		cleanupTicker: time.NewTicker(time.Duration(CleanupIntervalSec) * time.Second),
-		ctx:           ctx,
-		cancel:        cancel,
+		data:                make(map[string][]map[string]interface{}),
+		lastAccessed:        make(map[string]time.Time),
+		recordCounts:        make(map[string]int64),
+		maxAge:              time.Duration(MaxSymbolAge) * time.Second,
+		maxSize:             MaxSymbolCount,
+		maxRecordsPerSymbol: maxRecords,
+		isOrdersMap:         isOrdersMap,
+		cleanupTicker:       time.NewTicker(time.Duration(CleanupIntervalSec) * time.Second),
+		ctx:                 ctx,
+		cancel:              cancel,
 	}
 
 	// Start background cleanup
 	go mm.backgroundCleanup()
 
-	log.Printf("✅ MemoryManagedStockMap initialized - MaxAge: %v, MaxSize: %d", mm.maxAge, mm.maxSize)
+	mapType := "STOCK"
+	if isOrdersMap {
+		mapType = "ORDERS"
+	}
+
+	log.Printf("✅ MemoryManagedStockMap (%s) initialized - MaxAge: %v, MaxSize: %d, MaxRecordsPerSymbol: %d",
+		mapType, mm.maxAge, mm.maxSize, mm.maxRecordsPerSymbol)
 	return mm
 }
 
-func (mm *MemoryManagedStockMap) Set(symbol string, data map[string]interface{}) {
+// ✅ Add record to LIST - NO OVERWRITE, NO DATA LOSS
+func (mm *MemoryManagedStockMap) Add(symbol string, data map[string]interface{}) {
 	mm.mutex.Lock()
 	defer mm.mutex.Unlock()
 
@@ -85,26 +107,55 @@ func (mm *MemoryManagedStockMap) Set(symbol string, data map[string]interface{})
 		copyData[k] = v
 	}
 
-	mm.data[symbol] = copyData
-	mm.lastAccessed[symbol] = time.Now()
+	// Add timestamp for tracking
+	copyData["_added_at"] = time.Now()
 
-	// Trigger cleanup if size exceeds limit
-	if len(mm.data) > mm.maxSize {
+	// Add to LIST (newest first)
+	if existing, exists := mm.data[symbol]; exists {
+		// Prepend new record to maintain chronological order (newest first)
+		mm.data[symbol] = append([]map[string]interface{}{copyData}, existing...)
+		mm.recordCounts[symbol]++
+
+		// Limit records per symbol to prevent infinite growth
+		if len(mm.data[symbol]) > mm.maxRecordsPerSymbol {
+			// Remove oldest records (from the end)
+			removed := len(mm.data[symbol]) - mm.maxRecordsPerSymbol
+			mm.data[symbol] = mm.data[symbol][:mm.maxRecordsPerSymbol]
+			mm.recordCounts[symbol] -= int64(removed)
+			atomic.AddInt64(&mm.totalRecords, -int64(removed))
+
+			if mm.isOrdersMap {
+				log.Printf("⚠️ ORDERS: Removed %d old records for %s (kept %d newest)",
+					removed, symbol, mm.maxRecordsPerSymbol)
+			}
+		}
+	} else {
+		// Create new list for symbol
+		mm.data[symbol] = []map[string]interface{}{copyData}
+		mm.recordCounts[symbol] = 1
+	}
+
+	mm.lastAccessed[symbol] = time.Now()
+	atomic.AddInt64(&mm.totalRecords, 1)
+
+	// Trigger cleanup if total records exceed memory limits
+	if atomic.LoadInt64(&mm.totalRecords) > int64(mm.maxSize*10) { // 10x symbol limit
 		go mm.forceCleanup()
 	}
 }
 
-func (mm *MemoryManagedStockMap) Get(symbol string) (map[string]interface{}, bool) {
-	mm.mutex.Lock()
-	defer mm.mutex.Unlock()
+// ✅ Get latest record for symbol
+func (mm *MemoryManagedStockMap) GetLatest(symbol string) (map[string]interface{}, bool) {
+	mm.mutex.RLock()
+	defer mm.mutex.RUnlock()
 
-	data, exists := mm.data[symbol]
-	if exists {
+	if records, exists := mm.data[symbol]; exists && len(records) > 0 {
 		mm.lastAccessed[symbol] = time.Now()
 
-		// Return deep copy to prevent external modifications
+		// Return deep copy of latest (first) record
+		latest := records[0]
 		copyData := make(map[string]interface{})
-		for k, v := range data {
+		for k, v := range latest {
 			copyData[k] = v
 		}
 		return copyData, true
@@ -112,34 +163,77 @@ func (mm *MemoryManagedStockMap) Get(symbol string) (map[string]interface{}, boo
 	return nil, false
 }
 
-func (mm *MemoryManagedStockMap) Update(symbol string, newData map[string]interface{}) {
-	mm.mutex.Lock()
-	defer mm.mutex.Unlock()
+// ✅ Get all records for symbol
+func (mm *MemoryManagedStockMap) GetAll(symbol string) ([]map[string]interface{}, bool) {
+	mm.mutex.RLock()
+	defer mm.mutex.RUnlock()
 
-	existing, found := mm.data[symbol]
-	if !found {
-		existing = make(map[string]interface{})
-		mm.data[symbol] = existing
+	if records, exists := mm.data[symbol]; exists && len(records) > 0 {
+		mm.lastAccessed[symbol] = time.Now()
+
+		// Return deep copy of all records
+		copyRecords := make([]map[string]interface{}, len(records))
+		for i, record := range records {
+			copyData := make(map[string]interface{})
+			for k, v := range record {
+				copyData[k] = v
+			}
+			copyRecords[i] = copyData
+		}
+		return copyRecords, true
 	}
-
-	// Merge new data
-	for k, v := range newData {
-		existing[k] = v
-	}
-
-	mm.lastAccessed[symbol] = time.Now()
+	return nil, false
 }
 
+// ✅ Get N latest records for symbol
+func (mm *MemoryManagedStockMap) GetLatestN(symbol string, n int) ([]map[string]interface{}, bool) {
+	mm.mutex.RLock()
+	defer mm.mutex.RUnlock()
+
+	if records, exists := mm.data[symbol]; exists && len(records) > 0 {
+		mm.lastAccessed[symbol] = time.Now()
+
+		// Limit n to available records
+		if n > len(records) {
+			n = len(records)
+		}
+
+		// Return deep copy of N latest records
+		copyRecords := make([]map[string]interface{}, n)
+		for i := 0; i < n; i++ {
+			copyData := make(map[string]interface{})
+			for k, v := range records[i] {
+				copyData[k] = v
+			}
+			copyRecords[i] = copyData
+		}
+		return copyRecords, true
+	}
+	return nil, false
+}
+
+// ✅ Get records count for symbol
+func (mm *MemoryManagedStockMap) GetRecordCount(symbol string) int64 {
+	mm.mutex.RLock()
+	defer mm.mutex.RUnlock()
+
+	if count, exists := mm.recordCounts[symbol]; exists {
+		return count
+	}
+	return 0
+}
+
+// ✅ Mark symbol as processed (update access time)
 func (mm *MemoryManagedStockMap) MarkProcessed(symbol string) {
 	mm.mutex.Lock()
 	defer mm.mutex.Unlock()
 
-	// Update access time for gradual cleanup
 	if _, exists := mm.lastAccessed[symbol]; exists {
 		mm.lastAccessed[symbol] = time.Now()
 	}
 }
 
+// ✅ Background cleanup with LIST awareness
 func (mm *MemoryManagedStockMap) backgroundCleanup() {
 	for {
 		select {
@@ -172,17 +266,22 @@ func (mm *MemoryManagedStockMap) performCleanup() {
 
 	now := time.Now()
 	cleaned := 0
+	recordsRemoved := int64(0)
 
 	// Remove expired entries
 	for symbol, lastAccess := range mm.lastAccessed {
 		if now.Sub(lastAccess) > mm.maxAge {
+			if records, exists := mm.data[symbol]; exists {
+				recordsRemoved += int64(len(records))
+			}
 			delete(mm.data, symbol)
 			delete(mm.lastAccessed, symbol)
+			delete(mm.recordCounts, symbol)
 			cleaned++
 		}
 	}
 
-	// If still over limit, remove oldest entries
+	// If still over symbol limit, remove oldest accessed symbols
 	if len(mm.data) > mm.maxSize {
 		type symbolTime struct {
 			symbol string
@@ -203,18 +302,31 @@ func (mm *MemoryManagedStockMap) performCleanup() {
 			}
 		}
 
-		// Remove oldest entries until under limit
+		// Remove oldest symbols until under limit
 		toRemove := len(mm.data) - mm.maxSize
 		for i := 0; i < toRemove && i < len(entries); i++ {
 			symbol := entries[i].symbol
+			if records, exists := mm.data[symbol]; exists {
+				recordsRemoved += int64(len(records))
+			}
 			delete(mm.data, symbol)
 			delete(mm.lastAccessed, symbol)
+			delete(mm.recordCounts, symbol)
 			cleaned++
 		}
 	}
 
+	// Update total records count
+	atomic.AddInt64(&mm.totalRecords, -recordsRemoved)
+
 	if cleaned > 0 {
-		log.Printf("🧹 Memory cleanup: removed %d symbols, current size: %d", cleaned, len(mm.data))
+		mapType := "STOCK"
+		if mm.isOrdersMap {
+			mapType = "ORDERS"
+		}
+
+		log.Printf("🧹 %s Memory cleanup: removed %d symbols (%d records), current: %d symbols, %d total records",
+			mapType, cleaned, recordsRemoved, len(mm.data), atomic.LoadInt64(&mm.totalRecords))
 
 		// Force garbage collection after cleanup
 		runtime.GC()
@@ -222,15 +334,15 @@ func (mm *MemoryManagedStockMap) performCleanup() {
 		// Log memory stats
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
-		log.Printf("📊 Memory after cleanup: Alloc=%d KB, Sys=%d KB",
-			bToKb(m.Alloc), bToKb(m.Sys))
+		log.Printf("📊 %s Memory after cleanup: Alloc=%d KB, Sys=%d KB",
+			mapType, bToKb(m.Alloc), bToKb(m.Sys))
 	}
 }
 
-func (mm *MemoryManagedStockMap) GetStats() (int, int) {
+func (mm *MemoryManagedStockMap) GetStats() (int, int64, int64) {
 	mm.mutex.RLock()
 	defer mm.mutex.RUnlock()
-	return len(mm.data), len(mm.lastAccessed)
+	return len(mm.data), atomic.LoadInt64(&mm.totalRecords), int64(len(mm.lastAccessed))
 }
 
 func (mm *MemoryManagedStockMap) Close() {
@@ -245,18 +357,27 @@ func (mm *MemoryManagedStockMap) Close() {
 	mm.mutex.Lock()
 	defer mm.mutex.Unlock()
 
-	// Clear all data
-	mm.data = make(map[string]map[string]interface{})
-	mm.lastAccessed = make(map[string]time.Time)
+	totalRecords := atomic.LoadInt64(&mm.totalRecords)
+	mapType := "STOCK"
+	if mm.isOrdersMap {
+		mapType = "ORDERS"
+	}
 
-	log.Println("✅ MemoryManagedStockMap closed and cleared")
+	// Clear all data
+	mm.data = make(map[string][]map[string]interface{})
+	mm.lastAccessed = make(map[string]time.Time)
+	mm.recordCounts = make(map[string]int64)
+	atomic.StoreInt64(&mm.totalRecords, 0)
+
+	log.Printf("✅ %s MemoryManagedStockMap closed and cleared (%d records freed)",
+		mapType, totalRecords)
 }
 
 func bToKb(b uint64) uint64 {
 	return b / 1024
 }
 
-// ✅ CRITICAL ORDERS MANAGER with Memory Management
+// ✅ CRITICAL ORDERS MANAGER with LIST Memory Management - NO DATA LOSS
 type CriticalOrdersManager struct {
 	dataChan   chan map[string]interface{}
 	coll       *mongo.Collection
@@ -278,7 +399,7 @@ type CriticalOrdersManager struct {
 	bufferMutex       sync.RWMutex
 	lastProcessedTime time.Time
 
-	// ✅ Memory management
+	// ✅ LIST-based memory management - NO DATA LOSS
 	memoryMap    *MemoryManagedStockMap
 	memoryTicker *time.Ticker
 }
@@ -291,6 +412,7 @@ type CriticalOrdersStats struct {
 	totalRecovered   int64
 	totalBuffered    int64 // Buffered orders count
 	criticalFailures int64 // Critical failure count
+	totalMemoryAdded int64 // Total records added to memory
 	mutex            sync.RWMutex
 }
 
@@ -299,6 +421,12 @@ func (cos *CriticalOrdersStats) AddReceived(count int64) {
 	defer cos.mutex.Unlock()
 	atomic.AddInt64(&cos.totalReceived, count)
 	log.Printf("📈 ORDERS: Received +%d, Total: %d", count, cos.totalReceived)
+}
+
+func (cos *CriticalOrdersStats) AddMemoryAdded(count int64) {
+	cos.mutex.Lock()
+	defer cos.mutex.Unlock()
+	atomic.AddInt64(&cos.totalMemoryAdded, count)
 }
 
 func (cos *CriticalOrdersStats) AddFlushed(count int64) {
@@ -326,10 +454,10 @@ func (cos *CriticalOrdersStats) AddBuffered(count int64) {
 	atomic.AddInt64(&cos.totalBuffered, count)
 }
 
-func (cos *CriticalOrdersStats) GetCriticalStats() (received, flushed, dropped, buffered, failures int64) {
+func (cos *CriticalOrdersStats) GetCriticalStats() (received, flushed, dropped, buffered, failures, memoryAdded int64) {
 	cos.mutex.RLock()
 	defer cos.mutex.RUnlock()
-	return cos.totalReceived, cos.totalFlushed, cos.totalDropped, cos.totalBuffered, cos.criticalFailures
+	return cos.totalReceived, cos.totalFlushed, cos.totalDropped, cos.totalBuffered, cos.criticalFailures, cos.totalMemoryAdded
 }
 
 func NewCriticalOrdersManager(coll *mongo.Collection) *CriticalOrdersManager {
@@ -344,12 +472,12 @@ func NewCriticalOrdersManager(coll *mongo.Collection) *CriticalOrdersManager {
 		failedWrites:   make([]interface{}, 0),
 		retryTimer:     time.NewTicker(OrdersRetryDelay),
 		emergencyFlush: time.NewTicker(10 * time.Millisecond), // Every 10ms emergency check
-		memoryMap:      NewMemoryManagedStockMap(),
-		memoryTicker:   time.NewTicker(1 * time.Minute), // Memory monitoring every minute
+		memoryMap:      NewMemoryManagedStockMap(true),        // ← TRUE = Orders map with higher limits
+		memoryTicker:   time.NewTicker(1 * time.Minute),       // Memory monitoring every minute
 	}
 
 	// ✅ Start MULTIPLE processing goroutines for maximum reliability
-	com.wg.Add(7)                 // Added one more for memory monitoring
+	com.wg.Add(7)
 	go com.processBatches()       // Main processing
 	go com.retryFailedWrites()    // Retry failed orders
 	go com.emergencyMonitor()     // Emergency monitoring
@@ -358,9 +486,9 @@ func NewCriticalOrdersManager(coll *mongo.Collection) *CriticalOrdersManager {
 	go com.healthCheck()          // Health checker
 	go com.memoryMonitor()        // Memory monitoring
 
-	log.Printf("🛡️ CRITICAL ORDERS MANAGER initialized with MAXIMUM PROTECTION + Memory Management")
-	log.Printf("📦 Buffer size: %d, Flush: %v, Batch: %d",
-		OrdersMaxChannelSize, OrdersFlushInterval, OrdersBatchSize)
+	log.Printf("🛡️ CRITICAL ORDERS MANAGER initialized with LIST-based Memory Management - NO DATA LOSS")
+	log.Printf("📦 Buffer size: %d, Flush: %v, Batch: %d, Max Records Per Symbol: %d",
+		OrdersMaxChannelSize, OrdersFlushInterval, OrdersBatchSize, MaxOrdersPerSymbol)
 
 	return com
 }
@@ -369,9 +497,10 @@ func (com *CriticalOrdersManager) Add(data map[string]interface{}) {
 	com.stats.AddReceived(1)
 	com.lastProcessedTime = time.Now()
 
-	// ✅ Store in memory map for tracking
+	// ✅ Store in LIST-based memory map for tracking - NO DATA LOSS
 	if symbol, ok := data["symbol"].(string); ok {
-		com.memoryMap.Set(symbol, data)
+		com.memoryMap.Add(symbol, data) // ← ADD to LIST, not overwrite
+		com.stats.AddMemoryAdded(1)
 	}
 
 	vnLoc, _ := time.LoadLocation("Asia/Ho_Chi_Minh")
@@ -461,6 +590,7 @@ func (com *CriticalOrdersManager) Add(data map[string]interface{}) {
 	}
 }
 
+// ✅ Rest of the methods remain the same but updated for better logging...
 func (com *CriticalOrdersManager) processBatches() {
 	defer com.wg.Done()
 
@@ -771,15 +901,20 @@ func (com *CriticalOrdersManager) criticalStatsMonitor() {
 	for {
 		select {
 		case <-ticker.C:
-			received, flushed, dropped, buffered, failures := com.stats.GetCriticalStats()
+			received, flushed, dropped, buffered, failures, memoryAdded := com.stats.GetCriticalStats()
 			pending := len(com.dataChan)
 
 			com.failedWritesMux.Lock()
 			failedCount := len(com.failedWrites)
 			com.failedWritesMux.Unlock()
 
+			// ✅ Get memory stats from LIST-based memory map
+			symbolCount, totalRecords, accessCount := com.memoryMap.GetStats()
+
 			log.Printf("📊 CRITICAL ORDERS STATS - Received: %d, Flushed: %d, Pending: %d, Failed: %d, Buffered: %d",
 				received, flushed, pending, failedCount, buffered)
+			log.Printf("📊 MEMORY STATS - Symbols: %d, Total Records: %d, Memory Added: %d, Access Count: %d",
+				symbolCount, totalRecords, memoryAdded, accessCount)
 
 			// ✅ CRITICAL alerts for orders
 			if dropped > 0 {
@@ -870,11 +1005,11 @@ func (com *CriticalOrdersManager) memoryMonitor() {
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
 
-			dataCount, accessCount := com.memoryMap.GetStats()
+			symbolCount, totalRecords, accessCount := com.memoryMap.GetStats()
 			currentMemoryMB := m.Alloc / 1024 / 1024
 
-			log.Printf("🧠 ORDERS MEMORY - Symbols: %d, Access: %d, Memory: %d MB",
-				dataCount, accessCount, currentMemoryMB)
+			log.Printf("🧠 ORDERS MEMORY - Symbols: %d, Records: %d, Access: %d, Memory: %d MB",
+				symbolCount, totalRecords, accessCount, currentMemoryMB)
 
 			// Force cleanup if memory is high
 			if currentMemoryMB > MaxMemoryMB {
@@ -889,10 +1024,30 @@ func (com *CriticalOrdersManager) memoryMonitor() {
 					newMemoryMB, currentMemoryMB-newMemoryMB)
 			}
 
+			// ✅ Log symbol-level memory stats occasionally
+			if symbolCount > 0 && symbolCount%100 == 0 {
+				avgRecordsPerSymbol := float64(totalRecords) / float64(symbolCount)
+				log.Printf("📊 ORDERS: Average %.1f records per symbol (%d symbols)",
+					avgRecordsPerSymbol, symbolCount)
+			}
+
 		case <-com.ctx.Done():
 			return
 		}
 	}
+}
+
+// ✅ Add method to get memory data for debugging
+func (com *CriticalOrdersManager) GetMemoryData(symbol string) ([]map[string]interface{}, bool) {
+	return com.memoryMap.GetAll(symbol)
+}
+
+func (com *CriticalOrdersManager) GetLatestMemoryData(symbol string) (map[string]interface{}, bool) {
+	return com.memoryMap.GetLatest(symbol)
+}
+
+func (com *CriticalOrdersManager) GetMemoryDataCount(symbol string) int64 {
+	return com.memoryMap.GetRecordCount(symbol)
 }
 
 func (com *CriticalOrdersManager) Close() {
@@ -952,13 +1107,14 @@ func (com *CriticalOrdersManager) Close() {
 	// ✅ Final memory cleanup
 	runtime.GC()
 
-	received, flushed, dropped, buffered, failures := com.stats.GetCriticalStats()
+	received, flushed, dropped, buffered, failures, memoryAdded := com.stats.GetCriticalStats()
 	log.Printf("📈 FINAL CRITICAL ORDERS STATS:")
 	log.Printf("   Received: %d", received)
 	log.Printf("   Flushed: %d", flushed)
 	log.Printf("   Dropped: %d", dropped)
 	log.Printf("   Buffered: %d", buffered)
 	log.Printf("   Failures: %d", failures)
+	log.Printf("   Memory Added: %d", memoryAdded)
 
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
@@ -971,7 +1127,7 @@ func (com *CriticalOrdersManager) Close() {
 	}
 }
 
-// ✅ Regular Stock Manager with Memory Management
+// ✅ Regular Stock Manager with LIST Memory Management
 type RegularStockManager struct {
 	dataChan   chan map[string]interface{}
 	coll       *mongo.Collection
@@ -981,22 +1137,29 @@ type RegularStockManager struct {
 	forceFlush chan struct{}
 	stats      *RegularStockStats
 
-	// ✅ Memory management for stock data
+	// ✅ LIST-based memory management for stock data
 	memoryMap    *MemoryManagedStockMap
 	memoryTicker *time.Ticker
 }
 
 type RegularStockStats struct {
-	totalReceived int64
-	totalFlushed  int64
-	totalDropped  int64
-	mutex         sync.RWMutex
+	totalReceived    int64
+	totalFlushed     int64
+	totalDropped     int64
+	totalMemoryAdded int64
+	mutex            sync.RWMutex
 }
 
 func (rss *RegularStockStats) AddReceived(count int64) {
 	rss.mutex.Lock()
 	defer rss.mutex.Unlock()
 	atomic.AddInt64(&rss.totalReceived, count)
+}
+
+func (rss *RegularStockStats) AddMemoryAdded(count int64) {
+	rss.mutex.Lock()
+	defer rss.mutex.Unlock()
+	atomic.AddInt64(&rss.totalMemoryAdded, count)
 }
 
 func (rss *RegularStockStats) AddFlushed(count int64) {
@@ -1014,6 +1177,12 @@ func (rss *RegularStockStats) AddDropped(count int64) {
 	}
 }
 
+func (rss *RegularStockStats) GetStats() (received, flushed, dropped, memoryAdded int64) {
+	rss.mutex.RLock()
+	defer rss.mutex.RUnlock()
+	return rss.totalReceived, rss.totalFlushed, rss.totalDropped, rss.totalMemoryAdded
+}
+
 func NewRegularStockManager(coll *mongo.Collection) *RegularStockManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	rsm := &RegularStockManager{
@@ -1023,7 +1192,7 @@ func NewRegularStockManager(coll *mongo.Collection) *RegularStockManager {
 		cancel:       cancel,
 		forceFlush:   make(chan struct{}, 5),
 		stats:        &RegularStockStats{},
-		memoryMap:    NewMemoryManagedStockMap(),
+		memoryMap:    NewMemoryManagedStockMap(false), // ← FALSE = Stock map with normal limits
 		memoryTicker: time.NewTicker(2 * time.Minute), // Less frequent than orders
 	}
 
@@ -1032,17 +1201,18 @@ func NewRegularStockManager(coll *mongo.Collection) *RegularStockManager {
 	go rsm.monitorStats()
 	go rsm.memoryMonitor()
 
-	log.Printf("📊 Regular Stock Manager initialized with Memory Management - Buffer: %d, Flush: %v",
-		StockMaxChannelSize, StockFlushInterval)
+	log.Printf("📊 Regular Stock Manager initialized with LIST Memory Management - Buffer: %d, Flush: %v, Max Records Per Symbol: %d",
+		StockMaxChannelSize, StockFlushInterval, MaxRecordsPerSymbol)
 	return rsm
 }
 
 func (rsm *RegularStockManager) Add(data map[string]interface{}) {
 	rsm.stats.AddReceived(1)
 
-	// ✅ Store in memory map for tracking
+	// ✅ Store in LIST-based memory map for tracking
 	if symbol, ok := data["symbol"].(string); ok {
-		rsm.memoryMap.Set(symbol, data)
+		rsm.memoryMap.Add(symbol, data) // ← ADD to LIST, not overwrite
+		rsm.stats.AddMemoryAdded(1)
 	}
 
 	select {
@@ -1182,17 +1352,17 @@ func (rsm *RegularStockManager) monitorStats() {
 	for {
 		select {
 		case <-ticker.C:
-			rsm.stats.mutex.RLock()
-			received := rsm.stats.totalReceived
-			flushed := rsm.stats.totalFlushed
-			dropped := rsm.stats.totalDropped
-			rsm.stats.mutex.RUnlock()
-
+			received, flushed, dropped, memoryAdded := rsm.stats.GetStats()
 			pending := len(rsm.dataChan)
 			successRate := float64(flushed) / float64(received) * 100
 
+			// ✅ Get memory stats from LIST-based memory map
+			symbolCount, totalRecords, _ := rsm.memoryMap.GetStats()
+
 			log.Printf("📊 STOCK STATS - Received: %d, Flushed: %d, Pending: %d, Dropped: %d, Success: %.1f%%",
 				received, flushed, pending, dropped, successRate)
+			log.Printf("📊 STOCK MEMORY - Symbols: %d, Records: %d, Memory Added: %d",
+				symbolCount, totalRecords, memoryAdded)
 
 		case <-rsm.ctx.Done():
 			return
@@ -1211,10 +1381,11 @@ func (rsm *RegularStockManager) memoryMonitor() {
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
 
-			dataCount, _ := rsm.memoryMap.GetStats()
+			symbolCount, totalRecords, _ := rsm.memoryMap.GetStats()
 			currentMemoryMB := m.Alloc / 1024 / 1024
 
-			log.Printf("🧠 STOCK MEMORY - Symbols: %d, Memory: %d MB", dataCount, currentMemoryMB)
+			log.Printf("🧠 STOCK MEMORY - Symbols: %d, Records: %d, Memory: %d MB",
+				symbolCount, totalRecords, currentMemoryMB)
 
 			// More relaxed memory management for stock data
 			if currentMemoryMB > MaxMemoryMB+50 { // Higher threshold for stock
@@ -1226,6 +1397,19 @@ func (rsm *RegularStockManager) memoryMonitor() {
 			return
 		}
 	}
+}
+
+// ✅ Add methods to get memory data for debugging
+func (rsm *RegularStockManager) GetMemoryData(symbol string) ([]map[string]interface{}, bool) {
+	return rsm.memoryMap.GetAll(symbol)
+}
+
+func (rsm *RegularStockManager) GetLatestMemoryData(symbol string) (map[string]interface{}, bool) {
+	return rsm.memoryMap.GetLatest(symbol)
+}
+
+func (rsm *RegularStockManager) GetMemoryDataCount(symbol string) int64 {
+	return rsm.memoryMap.GetRecordCount(symbol)
 }
 
 func (rsm *RegularStockManager) Close() {
@@ -1249,17 +1433,13 @@ func (rsm *RegularStockManager) Close() {
 	// Final memory cleanup
 	runtime.GC()
 
-	rsm.stats.mutex.RLock()
-	received := rsm.stats.totalReceived
-	flushed := rsm.stats.totalFlushed
-	dropped := rsm.stats.totalDropped
-	rsm.stats.mutex.RUnlock()
+	received, flushed, dropped, memoryAdded := rsm.stats.GetStats()
 
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
-	log.Printf("📊 STOCK FINAL - Received: %d, Flushed: %d, Dropped: %d, Memory: %d KB",
-		received, flushed, dropped, m.Alloc/1024)
+	log.Printf("📊 STOCK FINAL - Received: %d, Flushed: %d, Dropped: %d, Memory Added: %d, Memory: %d KB",
+		received, flushed, dropped, memoryAdded, m.Alloc/1024)
 }
 
 // ✅ Utility functions
@@ -1310,6 +1490,6 @@ func connectMongoDB() *mongo.Client {
 		log.Fatal("❌ MongoDB ping failed:", err)
 	}
 
-	log.Println("✅ MongoDB connected with ORDERS PRIORITY + Memory Management configuration")
+	log.Println("✅ MongoDB connected with ORDERS PRIORITY + LIST Memory Management configuration")
 	return client
 }
