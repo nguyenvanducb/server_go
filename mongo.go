@@ -1294,7 +1294,7 @@ func connectMongoDB() *mongo.Client {
 		ApplyURI(MongoDBURI).
 		SetServerSelectionTimeout(15 * time.Second). // Longer for reliability
 		SetSocketTimeout(60 * time.Second).          // Longer for orders
-		SetMaxPoolSize(150).                         // More connections
+		SetMaxPoolSize(500).                         // More connections
 		SetMinPoolSize(20).                          // Keep connections ready
 		SetMaxConnIdleTime(30 * time.Second).
 		SetWriteConcern(wc).

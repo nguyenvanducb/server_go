@@ -22,6 +22,9 @@ var upgrader = websocket.Upgrader{
 
 // Xử lý kết nối mới từ client
 func handleConnections(w http.ResponseWriter, r *http.Request) {
+	// w là http.ResponseWriter: cánh cổng để bạn trả dữ liệu lại cho client
+	// r là *http.Request: request từ client gửi đến
+
 	// Nâng cấp HTTP lên WebSocket
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -62,6 +65,7 @@ func handleMessages() {
 
 // Hàm khởi chạy WebSocket server
 func startWebSocketServer() {
+	// 👉 Khi có yêu cầu HTTP đến đường dẫn /ws, server sẽ gọi hàm handleConnections để xử lý.
 	http.HandleFunc("/ws", handleConnections)
 
 	go handleMessages()

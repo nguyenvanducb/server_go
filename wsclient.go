@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -231,49 +230,4 @@ func mapData(code string, jsonData map[string]interface{}, stockManager *Regular
 		ordersManager.Add(orderData)
 		log.Printf("🔥 CRITICAL ORDER: %s processed with maximum priority", symbol)
 	}
-}
-
-// ✅ Graceful shutdown function với ORDERS PRIORITY
-func gracefulShutdown(stockManager *RegularStockManager, ordersManager *CriticalOrdersManager) {
-	log.Println("🛑 Graceful shutdown initiated...")
-
-	// ✅ Create a timeout context
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	done := make(chan bool, 2)
-
-	// ✅ Shutdown stock manager first (less critical)
-	if stockManager != nil {
-		go func() {
-			stockManager.Close()
-			done <- true
-		}()
-	} else {
-		done <- true
-	}
-
-	// ✅ Shutdown orders manager last with extra care (CRITICAL)
-	if ordersManager != nil {
-		go func() {
-			ordersManager.Close() // This will verify zero loss
-			done <- true
-		}()
-	} else {
-		done <- true
-	}
-
-	// ✅ Wait for both to complete or timeout
-	completed := 0
-	for completed < 2 {
-		select {
-		case <-done:
-			completed++
-		case <-ctx.Done():
-			log.Println("⚠️ Graceful shutdown timeout")
-			return
-		}
-	}
-
-	log.Println("✅ Graceful shutdown completed with orders verification")
 }
